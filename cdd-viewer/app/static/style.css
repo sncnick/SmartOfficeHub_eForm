@@ -467,6 +467,33 @@ tr.outdated input.value {
 .add-party .btn { margin-top: 8px; }
 .party > header .btn.small, .party > summary .btn.small { padding: 2px 8px; }
 
+button[data-outdated] {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+button[data-outdated="1"] {
+  border-color: #b45309;
+  background: #f59e0b;
+  color: #1c1917;
+}
+button[data-outdated="1"]:hover { background: #d97706; color: #fff; }
+button[data-outdated="0"] {
+  border-color: #047857;
+  background: #059669;
+  color: #fff;
+}
+button[data-outdated="0"]:hover { background: #047857; }
+.party > header button[data-outdated],
+.party > summary button[data-outdated],
+.addr-flag button[data-outdated],
+.id-row button[data-outdated],
+.value.item button[data-outdated] {
+  padding: 5px 12px;
+}
+
 /* Kept last so the normal field border does not cover the warning frame. */
 .field.has-issue > .value,
 .value.has-issue,
