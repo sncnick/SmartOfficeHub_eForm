@@ -1,0 +1,17 @@
+---
+description: 客戶個人資料保護：只可使用 dummy 檔，不可讀取、搜尋或傳送任何真實客戶資料
+alwaysApply: true
+---
+
+# 客戶資料保護（必須遵守）
+
+agent 讀取或輸出的任何內容都會傳送到 Cursor 和模型供應商，所以真實客戶資料一律不可以經過 agent。
+
+- 唯一可用的測試資料是 `Database purge/CDD base dummy.xlsx`。
+- 不可以讀取、搜尋、列出或開啟 `WR Consultant` 內 `Company_List/tools` 以外的任何檔案或資料夾；檔名本身也可能含有客戶名稱。
+- 在 `tools` 內，也不可以讀取 dummy 以外的 Excel、CSV、PDF、Word，或 `cdd-viewer/output/` 內 dummy 以外的 JSON。
+- 不可以讀取這個專案的舊對話記錄（agent-transcripts）或終端機記錄（terminals）。
+- 不可以把任何人的個人資料（姓名、身份證、地址、電話、email、出生日期）放進指令輸出、截圖、提示或回覆；需要檢查資料時只輸出統計數字。
+- 不可以用 webapp 的上載功能或 `CDD_EXCEL_DIR` 載入真實檔。用真實資料測試要由用戶在本機自己操作，agent 不查看結果。
+- 不可以把資料上傳、推送或傳送到任何外部服務（雲端、Git、網站、第三方 API）。
+- 如果 hook（`~/.cursor/hooks/protect-client-data.py`）阻擋了某個操作，不可以嘗試繞過，要直接向用戶說明。

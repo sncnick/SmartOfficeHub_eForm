@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CDD 公司資料檢視</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">CDD 公司資料檢視</div>
+    <div class="toolbar">
+      <label class="control">檔案
+        <select id="fileSelect" aria-label="選擇 Excel 檔"></select>
+      </label>
+      <label class="btn">上載 Excel
+        <input type="file" id="uploadInput" accept=".xlsx,.xlsm" hidden>
+      </label>
+      <button type="button" class="btn" id="downloadBtn">下載 JSON</button>
+      <button type="button" class="btn" id="issuesBtn">資料問題 <span id="issueCount" class="count"></span></button>
+      <label class="control"><input type="checkbox" id="expandOutdated"> 展開所有 OUTDATED</label>
+    </div>
+  </header>
+  <div class="source-bar" id="sourceBar"></div>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <input type="search" id="search" placeholder="搜尋編號、公司名、BR、人名…" autocomplete="off">
+      <div class="filter-panel" id="filterPanel"></div>
+      <div class="muted small" id="companyCount"></div>
+      <ul class="company-list" id="companyList"></ul>
+    </aside>
+    <main class="main" id="main">
+      <div class="placeholder">載入中…</div>
+    </main>
+  </div>
+
+  <div class="overlay hidden" id="issuesOverlay">
+    <div class="panel" role="dialog" aria-label="資料問題清單">
+      <div class="panel-head">
+        <h2>資料問題清單</h2>
+        <div class="panel-tools">
+          <select id="severityFilter" aria-label="程度">
+            <option value="warning">錯誤及警告</option>
+            <option value="all">全部（包括提示）</option>
+            <option value="error">只看錯誤</option>
+          </select>
+          <input type="search" id="issueSearch" placeholder="搜尋說明或公司…" autocomplete="off">
+          <button type="button" class="btn" id="closeIssues">關閉</button>
+        </div>
+      </div>
+      <div class="panel-body" id="issuesBody"></div>
+    </div>
+  </div>
+
+  <div class="pie-tip hidden" id="pieTip" role="tooltip"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

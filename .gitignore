@@ -1,0 +1,9 @@
+.DS_Store
+__pycache__/
+*.pyc
+
+# Client workbooks and parsed output stay on this machine.
+Database purge/
+cdd-viewer/output/
+*.xlsx
+*.xlsm
