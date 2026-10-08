@@ -10,9 +10,10 @@
   <header class="topbar">
     <div class="brand">CDD 公司資料檢視</div>
     <div class="toolbar">
-      <label class="control">檔案
-        <select id="fileSelect" aria-label="選擇 Excel 檔"></select>
+      <label class="control">匯入用 Excel
+        <select id="fileSelect" aria-label="選擇要匯入的 Excel"></select>
       </label>
+      <button type="button" class="btn" id="importFileBtn">匯入所選 Excel</button>
       <label class="btn">上載 Excel
         <input type="file" id="uploadInput" accept=".xlsx,.xlsm" hidden>
       </label>

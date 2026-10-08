@@ -1,7 +1,8 @@
-"""Web viewer for the CDD workbook: JSON API plus a static form-style page."""
+"""CDD platform: Excel is imported once into a document database, then edited there."""
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
@@ -11,13 +12,15 @@ from pathlib import Path
 from urllib.parse import quote
 from zipfile import BadZipFile
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from openpyxl.utils.exceptions import InvalidFileException
 from starlette.concurrency import run_in_threadpool
 
+from .documents import add_party, add_record, ensure_party_ids, set_outdated, set_value
 from .excel_parser import DEFAULT_SHEET, ParseError, parse_workbook
+from .store import get_store
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -109,9 +112,160 @@ def _select(file: str | None, upload: str | None) -> dict:
     raise HTTPException(400, "請指定 file 或 upload")
 
 
+def _now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def _import_parsed(data: dict, file_name: str, replace: bool) -> dict:
+    store = get_store()
+    if store.count() and not replace:
+        raise HTTPException(409, "資料庫已有公司。再匯入會取代現有資料，請確認後再執行。")
+    docs = []
+    now = _now()
+    for company in data.get("companies") or []:
+        ensure_party_ids(company)
+        company["imported_from"] = file_name
+        company["created_at"] = now
+        company["updated_at"] = now
+        docs.append(company)
+    source = data.get("source") or {}
+    meta = {
+        "file": file_name,
+        "imported_at": source.get("parsed_at") or now,
+        "sheet": source.get("sheet") or "",
+        "header_rows": source.get("header_rows") or [],
+        "sheet_issues": data.get("issues") or [],
+        "count": len(docs),
+    }
+    store.replace_all(docs, meta)
+    return {"imported": len(docs), "meta": meta}
+
+
+def _database_payload() -> dict:
+    store = get_store()
+    meta = store.get_meta()
+    companies = store.all_docs()
+    for company in companies:
+        if ensure_party_ids(company):
+            store.save(company)
+    sheet_issues = list(meta.get("sheet_issues") or [])
+    company_issues = [issue for company in companies for issue in (company.get("issues") or [])]
+    counts = {"error": 0, "warning": 0, "info": 0}
+    for issue in sheet_issues + company_issues:
+        severity = issue.get("severity")
+        if severity in counts:
+            counts[severity] += 1
+    return {
+        "source": {
+            "file": meta.get("file") or "",
+            "sheet": meta.get("sheet") or "",
+            "header_rows": meta.get("header_rows") or [],
+            "parsed_at": meta.get("imported_at") or _now(),
+        },
+        "summary": {"companies": len(companies), "issues": counts},
+        "issues": sheet_issues,
+        "companies": companies,
+    }
+
+
 @app.get("/api/health")
 def health() -> dict:
+    try:
+        get_store().ping()
+    except Exception as exc:
+        log.warning("database is not ready: %s", exc)
+        raise HTTPException(503, "資料庫未就緒") from exc
     return {"status": "ok"}
+
+
+@app.get("/api/database")
+def database() -> dict:
+    return _database_payload()
+
+
+@app.post("/api/companies/{company_id}/parties")
+def create_party(company_id: str, payload: dict = Body(...)) -> dict:
+    store = get_store()
+    company = store.get(company_id)
+    if company is None:
+        raise HTTPException(404, "找不到這間公司")
+    try:
+        updated = add_party(company, payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    updated["updated_at"] = _now()
+    return store.save(updated)
+
+
+@app.post("/api/companies/{company_id}/records")
+def create_record(company_id: str, payload: dict = Body(...)) -> dict:
+    store = get_store()
+    company = store.get(company_id)
+    if company is None:
+        raise HTTPException(404, "找不到這間公司")
+    try:
+        updated = add_record(company, payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    updated["updated_at"] = _now()
+    return store.save(updated)
+
+
+@app.post("/api/companies/{company_id}/field")
+def update_field(company_id: str, payload: dict = Body(...)) -> dict:
+    store = get_store()
+    company = store.get(company_id)
+    if company is None:
+        raise HTTPException(404, "找不到這間公司")
+    try:
+        updated = set_value(company, payload.get("path"), payload.get("value"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    updated["updated_at"] = _now()
+    return store.save(updated)
+
+
+@app.post("/api/companies/{company_id}/outdated")
+def mark_outdated(company_id: str, payload: dict = Body(...)) -> dict:
+    store = get_store()
+    company = store.get(company_id)
+    if company is None:
+        raise HTTPException(404, "找不到這間公司")
+    try:
+        updated = set_outdated(company, str(payload.get("party_id") or ""), bool(payload.get("outdated")))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    updated["updated_at"] = _now()
+    return store.save(updated)
+
+
+@app.post("/api/import")
+async def import_file(file: str, replace: bool = False) -> dict:
+    path = _resolve(file)
+    data = await run_in_threadpool(_parse, path, path.name)
+    return _import_parsed(data, path.name, replace)
+
+
+@app.post("/api/import/upload")
+async def import_upload(replace: bool = False, file: UploadFile = File(...)) -> dict:
+    name = Path(file.filename or "upload.xlsx").name
+    if Path(name).suffix.lower() not in EXCEL_SUFFIXES:
+        raise HTTPException(400, "只接受 .xlsx 或 .xlsm 檔")
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "檔案超過 30 MB")
+    data = await run_in_threadpool(_parse, content, name)
+    return _import_parsed(data, name, replace)
+
+
+@app.get("/api/export")
+def export_db() -> Response:
+    payload = _database_payload()
+    return Response(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''cdd-database.json"},
+    )
 
 
 @app.get("/api/files")

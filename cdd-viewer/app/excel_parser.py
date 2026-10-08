@@ -277,6 +277,19 @@ _PLACEHOLDER_KINDS = (
 _CORPORATE_RE = re.compile(r"\b(limited|ltd|company|corporation|corp|inc|llc)\b|有限公司", re.I)
 
 
+def id_document_type(text: str | None) -> str | None:
+    """HKID when the number matches; passport only when the cell says so."""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    compact = re.sub(r"\s+", "", raw)
+    if _HKID_RE.match(compact) or _HKID_RE.match(raw):
+        return "hkid"
+    if re.search(r"passport", raw, re.I):
+        return "passport"
+    return None
+
+
 def classify(value: Any) -> str | None:
     """Guess what a free-form person / address cell contains."""
     if is_blank(value):
@@ -458,6 +471,16 @@ def _fmt_num(value: Any) -> str:
 
 def _fmt_pct(value: float) -> str:
     return f"{value:.2%}" if 0 <= value <= 1.0001 else _fmt_num(value)
+
+
+def bypasses_address_one(lines) -> bool:
+    """True when field 1 is empty and fields 2, 3 and 4 are all filled.
+
+    A finished import never looks like that. Those cells belong in the undefined area.
+    """
+    cells = [str(part or "").strip() for part in list(lines or [])]
+    cells = (cells + ["", "", "", ""])[:4]
+    return not cells[0] and all(cells[index] for index in (1, 2, 3))
 
 
 def split_address(text: str | None) -> list[str]:
@@ -928,6 +951,15 @@ class _CompanyBuilder:
             party["br_no"] = text
             return
         kind = classify(value)
+        address_lines = None
+        if kind in ("address", "address_zh"):
+            address_lines = self._address_lines(row, text)
+            if bypasses_address_one(address_lines):
+                kind = "other"
+                address_lines = None
+                for issue in self.issues:
+                    if issue.get("row") == row.n and str(issue.get("field") or "").startswith("address."):
+                        issue["field"] = "undefined"
         if kind in ("date", "dob") and not party["date_of_birth"]:
             result = parse_date(value)
             party["date_of_birth"] = result.value if result and result.ok else text
@@ -941,14 +973,15 @@ class _CompanyBuilder:
         if kind == "name" and not party["name_en"]:
             party["name_en"] = text
             return
-        self._party_field(party, row, kind, text, col, head)
+        self._party_field(party, row, kind, text, col, head, address_lines)
 
     def _party_other(self, party: dict, row: Row, col: int, head: bool) -> None:
         text = clean_text(row.v(col))
         if text and text.lower() not in _EMPTY_MARKS:
-            self._party_field(party, row, "other", text, col, head)
+            self._party_field(party, row, "other", text, col, head, None)
 
-    def _party_field(self, party: dict, row: Row, kind: str, text: str, col: int, head: bool) -> None:
+    def _party_field(self, party: dict, row: Row, kind: str, text: str, col: int, head: bool,
+                     address_lines: list[str] | None = None) -> None:
         key = {"address": "addresses", "address_zh": "addresses", "id": "id_numbers",
                "email": "emails", "phone": "phones"}.get(kind, "other")
         reasons = list(party["outdated_reasons"]) if head else self.sheet.reasons(row)
@@ -956,8 +989,10 @@ class _CompanyBuilder:
             reasons.append("block")
         item = {"value": text, "row": row.n, "column": LETTERS[col],
                 "outdated": bool(reasons), "outdated_reasons": reasons}
+        if key == "id_numbers":
+            item["id_type"] = id_document_type(text)
         if key == "addresses":
-            item["lines"] = self._address_lines(row, text)
+            item["lines"] = address_lines if address_lines is not None else self._address_lines(row, text)
         if not head:
             start = parse_date(row.v(self.cols["appoint"]))
             end = parse_date(row.v(self.cols["resign"]))

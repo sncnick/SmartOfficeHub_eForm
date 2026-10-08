@@ -6,12 +6,21 @@ from pathlib import Path
 import openpyxl
 from openpyxl.styles import PatternFill
 
-from app.excel_parser import color_name, is_orange, is_red, parse_date, parse_label, parse_workbook, split_address
+from app.excel_parser import (
+    color_name, id_document_type, is_orange, is_red, parse_date, parse_label, parse_workbook, split_address,
+)
 
 DUMMY = Path(os.environ.get(
     "CDD_TEST_FILE",
     Path(__file__).resolve().parents[2] / "Database purge" / "CDD base dummy.xlsx",
 ))
+
+
+class IdDocumentTypeTests(unittest.TestCase):
+    def test_hkid_and_passport_word(self):
+        self.assertEqual(id_document_type("A123456(7)"), "hkid")
+        self.assertEqual(id_document_type("Passport AB1"), "passport")
+        self.assertIsNone(id_document_type("12345678"))
 
 
 class LabelTests(unittest.TestCase):
@@ -333,8 +342,9 @@ class AddressStartDateTests(unittest.TestCase):
         ])
         company = data["companies"][0]
         issue = next(i for i in company["issues"] if i["code"] == "DATE_YEAR_ONLY")
-        self.assertEqual((issue["field"], issue["row"], issue["severity"]), ("address.from", 5, "warning"))
-        self.assertEqual(company["directors"][0]["addresses"][0]["from"], "2023")
+        self.assertEqual((issue["field"], issue["row"], issue["severity"]), ("undefined", 5, "warning"))
+        self.assertEqual(company["directors"][0]["other"][0]["from"], "2023")
+        self.assertEqual(company["directors"][0]["addresses"], [])
 
 
 class AddressDateTests(unittest.TestCase):

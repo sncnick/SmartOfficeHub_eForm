@@ -200,6 +200,34 @@ tr.issue-row td { padding: 2px 8px 6px; border-bottom: 1px solid #fecaca; backgr
 .addr-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .addr-grid.outdated .value { background: var(--old-bg); color: var(--old-text); }
 
+.id-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 6px;
+}
+.id-row input.text {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+}
+.id-ticks { display: inline-flex; align-items: center; gap: 10px; }
+.id-tick {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+.id-tick input { width: auto; margin: 0; }
+
 .item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .item .text { flex: 1 1 auto; }
 .item .dates { color: var(--muted); font-size: 12px; }
@@ -218,6 +246,14 @@ details[open] > summary::before { content: "▾"; }
 details.old-items { margin-top: 4px; }
 details.old-items > summary { color: var(--old-text); font-size: 12px; font-weight: 600; }
 details.old-items > .value { margin-top: 4px; }
+details.old-items[open] {
+  margin-top: 8px;
+  padding: 8px 10px 10px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  background: #e4e9ef;
+}
+details.old-items[open] > summary { margin-bottom: 8px; }
 
 .party { margin-bottom: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
 .party > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
@@ -225,6 +261,7 @@ details.party.outdated { padding: 0; border-style: dashed; background: var(--old
 details.party.outdated > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; }
 details.party.outdated[open] > summary { border-bottom: 1px dashed var(--border); }
 details.party.outdated .party-body { padding: 12px; }
+details.party.outdated[open] .party-body { background: #e4e9ef; }
 details.party.outdated .field .value { background: #f3f5f8; color: var(--old-text); }
 .party .who { font-weight: 600; }
 .party .dates { color: var(--muted); font-size: 12px; }
@@ -248,6 +285,10 @@ tr.muted td { color: var(--muted); }
 .old-group .caret::before { content: "▸"; display: inline-block; width: 1em; }
 .old-group.open .caret::before { content: "▾"; }
 .old-group:not(.open) tr:not(.group-toggle) { display: none; }
+.old-group.open tr td:first-child { border-left: 1px dashed #94a3b8; }
+.old-group.open tr td:last-child { border-right: 1px dashed #94a3b8; }
+.old-group.open tr:last-child td { border-bottom: 1px dashed #94a3b8; }
+.old-group.open tr:not(.group-toggle) td { background: #e4e9ef; }
 tr.link { cursor: pointer; }
 tr.link:hover td { background: #f1f5f9; }
 
@@ -356,10 +397,82 @@ tr.jump:hover td { background: #eff6ff; }
   50% { box-shadow: 0 0 0 6px rgba(37, 99, 235, .28); }
 }
 
+.field input.value,
+input.cell-input {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: #fff;
+}
+input.cell-input, select.cell-input {
+  min-width: 4em;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+}
+.transfer-picks { min-width: 180px; }
+.transfer-picks span { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; white-space: nowrap; }
+.transfer-picks select { width: 100%; }
+details.party.outdated .field input.value,
+.addr-grid.outdated input.value,
+tr.outdated input.cell-input,
+tr.outdated input.value {
+  color: var(--text);
+  background: #fff;
+}
+.value.item input.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+}
+
+.undefined-block {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px dashed #d97706;
+  border-radius: 8px;
+  background: #fffbeb;
+}
+.undefined-block h4 { margin: 0 0 8px; font-size: 13px; }
+.undefined-block .value { margin-top: 6px; }
+.undefined-block .value.item,
+.undefined-block .value.item input.text {
+  color: var(--text);
+  background: #fff;
+}
+
+.add-party { margin: 0 0 12px; }
+.add-party > summary { font-weight: 600; }
+.add-party form { margin-top: 10px; }
+.add-party input {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  background: #fff;
+}
+.add-party .id-ticks { margin-top: 6px; }
+.add-party .id-tick input {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+.add-party .btn { margin-top: 8px; }
+.party > header .btn.small, .party > summary .btn.small { padding: 2px 8px; }
+
 /* Kept last so the normal field border does not cover the warning frame. */
 .field.has-issue > .value,
 .value.has-issue,
-.value.item.has-issue {
+.value.item.has-issue,
+.undefined-block .value.item.has-issue,
+.id-row.has-issue input.text {
   border: 2px solid #dc2626;
   background: #fef2f2;
 }

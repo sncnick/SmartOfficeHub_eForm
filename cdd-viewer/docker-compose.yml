@@ -1,4 +1,17 @@
 services:
+  mongo:
+    image: mongo:7
+    container_name: cdd-mongo
+    volumes:
+      - cdd-mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
   cdd-viewer:
     build: .
     image: cdd-viewer:dev
@@ -10,7 +23,15 @@ services:
       CDD_DEFAULT_FILE: "CDD base dummy.xlsx"
       CDD_SHEET: "CDD"
       CDD_OUTDATED_FILLS: "00B0F0"
+      CDD_MONGO_URL: mongodb://mongo:27017
+      CDD_MONGO_DB: cdd
     volumes:
       - "${CDD_EXCEL_DIR:-../Database purge}:/data:ro"
       - "./output:/app/output"
+    depends_on:
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  cdd-mongo:
