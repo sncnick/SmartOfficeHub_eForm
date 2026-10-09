@@ -293,11 +293,10 @@ function itemHtml(it, path = '') {
   const text = path
     ? `<input class="text" data-path="${esc(path)}" value="${esc(it.value || '')}" autocomplete="off">`
     : `<span class="text">${esc(it.value)}</span>`;
-  const toggle = it.record_id ? outdatedButton(it.record_id, !!it.outdated) : '';
   return `<div class="value item${it.outdated ? ' outdated' : ''}${mark.cls}" title="${esc(where)}"${rowAttr(it.row)}${locsFrom(issues)}>`
     + text
     + `${range ? `<span class="dates">${esc(range)}</span>` : ''}`
-    + `${it.outdated && !render.inOutdated ? outdatedBadge(it) : ''}${toggle}${mark.html}</div>`;
+    + `${it.outdated && !render.inOutdated ? outdatedBadge(it) : ''}${mark.html}</div>`;
 }
 
 function idTypeOf(item) {
@@ -328,11 +327,10 @@ function idRow(item, pathBase, index) {
     ? `<input class="text" data-path="${esc(valuePath)}" data-saved="${esc(item.value || '')}" value="${esc(item.value || '')}" autocomplete="off" placeholder="證件號碼">`
     : `<span class="text">${esc(item.value || '')}</span>`;
   const range = dateRange(item.from, item.to);
-  const toggle = item.record_id ? outdatedButton(item.record_id, !!item.outdated) : '';
   return `<div class="id-row${item.outdated ? ' outdated' : ''}${mark.cls}"${rowAttr(item.row)}${locsFrom(issues)}>${text}`
     + `${idTypeTicks(idTypeOf(item), typePath)}`
     + `${range ? `<span class="dates">${esc(range)}</span>` : ''}`
-    + `${item.outdated && !render.inOutdated ? outdatedBadge(item) : ''}${toggle}${mark.html}</div>`;
+    + `${item.outdated && !render.inOutdated ? outdatedBadge(item) : ''}${mark.html}</div>`;
 }
 
 function idField(items, cls = '', issues = [], pathBase = '') {
@@ -387,7 +385,7 @@ function addressLines(item) {
   return parts;
 }
 
-function addressGrid(item, fromIssues = [], toIssues = [], pathBase = '') {
+function addressGrid(item, fromIssues = [], toIssues = [], pathBase = '', showBadge = true) {
   const lines = item ? addressLines(item) : ['', '', '', ''];
   const names = ['地址 1', '地址 2', '地址 3', '地址 4'];
   const row = item?.row;
@@ -397,9 +395,7 @@ function addressGrid(item, fromIssues = [], toIssues = [], pathBase = '') {
     .flatMap((name) => issuesAt(name, alias)));
   const fromAll = [...fromIssues, ...(row == null ? [] : issuesAt('address.from', row))];
   const toAll = [...toIssues, ...(row == null ? [] : issuesAt('address.to', row))];
-  const badge = item?.outdated && !render.inOutdated ? outdatedBadge(item) : '';
-  const toggle = item?.record_id ? outdatedButton(item.record_id, !!item.outdated) : '';
-  const flag = (badge || toggle) ? `<div class="addr-flag">${badge}${toggle}</div>` : '';
+  const badge = showBadge && item?.outdated && !render.inOutdated ? `<div class="addr-flag">${outdatedBadge(item)}</div>` : '';
   const lineIssues = (index) => (row == null ? [] : issuesAt(`address.line.${index + 1}`, row));
   const linePath = (index) => (pathBase ? `${pathBase}/lines/${index}` : '');
   const boxes = names.map((name, index) => field(name, lines[index], '', lineIssues(index), linePath(index))).join('')
@@ -409,7 +405,7 @@ function addressGrid(item, fromIssues = [], toIssues = [], pathBase = '') {
   const mark = issueMarks([...itemIssues, ...aliasIssues]);
   const where = item?.row ? `Excel 第 ${item.row} 行` : '';
   return `<div class="addr-grid${item?.outdated ? ' outdated' : ''}${mark.cls}" title="${esc(where)}"${rowAttr(row)}${locsFrom([...itemIssues, ...aliasIssues])}>`
-    + `${flag}${boxes}${mark.html}</div>`;
+    + `${badge}${boxes}${mark.html}</div>`;
 }
 
 function undefinedBlock(items, pathBase = '') {
@@ -430,9 +426,8 @@ function undefinedBlock(items, pathBase = '') {
     const range = dateRange(item.from, item.to);
     const locs = item.row == null ? '' : locListAttr(locFields.map((name) => [name, item.row]));
     const badge = item.outdated ? outdatedBadge(item) : '';
-    const toggle = item.record_id ? outdatedButton(item.record_id, !!item.outdated) : '';
     return `<div class="value item${mark.cls}"${rowAttr(item.row)}${locs}>${text}`
-      + `${range ? `<span class="dates">${esc(range)}</span>` : ''}${badge}${toggle}${mark.html}</div>`;
+      + `${range ? `<span class="dates">${esc(range)}</span>` : ''}${badge}${mark.html}</div>`;
   }).join('');
   if (!body) return '';
   return `<section class="undefined-block span-3"><h4>未定義</h4>${body}</section>`;
@@ -513,7 +508,7 @@ function branchRow(b) {
       <td>${cellInput(b.br_no, base ? `${base}/br_no` : '')}</td>
       <td>${boxed(cellInput(fmtDate(b.from), base ? `${base}/from` : ''), from)}</td>
       <td>${boxed(cellInput(fmtDate(b.to), base ? `${base}/to` : ''), to)}</td>
-      ${cell(`${stateBadge(b)} ${outdatedButton(b.record_id, b.outdated)}`)}<td class="muted">${b.row ?? ''}</td>
+      ${cell(stateBadge(b))}<td class="muted">${b.row ?? ''}</td>
     </tr>${issueRow([...label, ...from, ...to], 10)}`;
 }
 
@@ -548,9 +543,9 @@ function roCard(e, pathBase = '') {
   const status = issuesAt('ro.status', e.row);
   const mark = issueMarks(status);
   return `<div class="addr-record"${rowAttr(e.row)}${locsFrom(status)}>`
-    + `<div class="addr-meta">${e.outdated ? '' : stateBadge(e)}`
+    + `<div class="addr-meta">${stateBadge(e)}${outdatedButton(e.record_id, e.outdated)}`
     + `<span class="row-ref">${e.row ? `Excel 第 ${e.row} 行` : ''}</span></div>`
-    + `${addressGrid(e, issuesAt('ro.from', e.row), issuesAt('ro.to', e.row), pathBase)}${mark.html}</div>`;
+    + `${addressGrid(e, issuesAt('ro.from', e.row), issuesAt('ro.to', e.row), pathBase, false)}${mark.html}</div>`;
 }
 
 function roSection(c) {
@@ -584,7 +579,7 @@ function capitalRow(s) {
       <td class="num">${box('total_consideration', s.total_consideration ?? '')}</td>
       <td>${box('currency', s.currency ?? '')}</td><td>${box('class', s.class ?? '')}</td><td>${box('type', s.type ?? '')}</td>
       <td>${boxed(box('date', fmtDate(s.date)), date)}</td>
-      ${cell(`${stateBadge(s)} ${outdatedButton(s.record_id, s.outdated)}`, status)}<td class="muted">${s.row ?? ''}</td>
+      ${cell(stateBadge(s), status)}<td class="muted">${s.row ?? ''}</td>
     </tr>${issueRow([...date, ...status], 10)}`;
 }
 
@@ -843,7 +838,7 @@ function holdingRow(h, p, key) {
   return `
     <tr class="${h.outdated ? 'outdated' : ''}${h.pre_transfer ? ' pre' : ''}"${rowAttr(h.row)}>
       ${cell(box('label', h.label || ''), label)}
-      <td>${badges.join(' ')} ${outdatedButton(h.record_id, h.outdated)}</td>
+      <td>${badges.join(' ')}</td>
       <td class="num">${box('no_of_shares', h.no_of_shares ?? '')}</td>
       ${cell(box('total_no_of_shares', h.total_no_of_shares ?? ''), total, 'num')}
       ${cell(esc(fmtPct(h.percentage_excel)), pct, 'num')}
@@ -934,6 +929,11 @@ function rowRef(p) {
   if (p.row) return `<span class="row-ref">Excel 第 ${p.row} 行</span>`;
   if (p.added) return '<span class="row-ref">新增</span>';
   return '<span class="row-ref"></span>';
+}
+
+function blockOutdatedButton(key, party) {
+  if (!['directors', 'shareholders', 'company_secretaries'].includes(key)) return '';
+  return outdatedButton(party.party_id, party.outdated);
 }
 
 function outdatedButton(id, outdated) {
@@ -1043,7 +1043,7 @@ function partyCard(p, key) {
     <header>
       <span class="tag${headerIssues.cls}"${locsFrom(labelIssues)}>${esc(partyTitle(p, key))}</span>${raw}
       ${stateBadge(p)}${sharesNote(p)}
-      ${outdatedButton(p.party_id, p.outdated)}
+      ${blockOutdatedButton(key, p)}
       ${rowRef(p)}
     </header>
     ${headerIssues.html ? `<div class="party-issues">${headerIssues.html}</div>` : ''}
@@ -1066,7 +1066,7 @@ function outdatedPartyCard(p, key) {
       <span class="tag">${esc(partyTitle(p, key))}</span>${outdatedBadge(p)}
       ${problems ? `<span class="badge issue" title="展開查看有問題的欄位">⚠ ${problems} 個問題</span>` : ''}
       <span class="who">${esc(name)}</span>${period ? `<span class="dates">${esc(period)}</span>` : ''}
-      ${outdatedButton(p.party_id, p.outdated)}
+      ${blockOutdatedButton(key, p)}
       ${rowRef(p)}
     </summary>
     <div class="party-body">${headerIssues.html ? `<div class="party-issues">${headerIssues.html}</div>` : ''}${body}</div>
