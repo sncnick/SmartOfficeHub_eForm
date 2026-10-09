@@ -473,6 +473,23 @@ def _fmt_pct(value: float) -> str:
     return f"{value:.2%}" if 0 <= value <= 1.0001 else _fmt_num(value)
 
 
+def follows_address_fields(lines) -> bool:
+    """True when filled cells start at field 1 and do not skip an earlier field.
+
+    End-filled leftovers such as only field 4, or fields 2–4 with field 1 empty,
+    are not an address.
+    """
+    cells = [str(part or "").strip() for part in list(lines or [])]
+    cells = (cells + ["", "", "", ""])[:4]
+    seen_empty = False
+    for cell in cells:
+        if not cell:
+            seen_empty = True
+        elif seen_empty:
+            return False
+    return True
+
+
 def bypasses_address_one(lines) -> bool:
     """True when field 1 is empty and fields 2, 3 and 4 are all filled.
 
@@ -954,7 +971,7 @@ class _CompanyBuilder:
         address_lines = None
         if kind in ("address", "address_zh"):
             address_lines = self._address_lines(row, text)
-            if bypasses_address_one(address_lines):
+            if not follows_address_fields(address_lines):
                 kind = "other"
                 address_lines = None
                 for issue in self.issues:
@@ -1175,6 +1192,13 @@ class _CompanyBuilder:
                 changes = sum(h["no_of_shares"] for h in active if isinstance(h["no_of_shares"], (int, float)))
                 current = [h for h in holdings[start:] if not h["outdated"]]
                 running = current[-1]["total_no_of_shares"] if current else None
+                calc = current[-1] if current else None
+                if calc is not None:
+                    for holding in holdings:
+                        if holding is calc:
+                            break
+                        if not holding["outdated"]:
+                            holding["pre_transfer"] = True
                 if party["outdated"] or not current:
                     party["current_shares"] = 0
                 elif isinstance(running, (int, float)):

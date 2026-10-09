@@ -112,8 +112,8 @@ def _line_list(address: dict) -> list[str]:
 
 
 def _is_bypass(address: dict) -> bool:
-    from .excel_parser import bypasses_address_one
-    return bypasses_address_one(_line_list(address))
+    from .excel_parser import follows_address_fields
+    return not follows_address_fields(_line_list(address))
 
 
 def _remember_undefined(party: dict, address: dict) -> bool:
@@ -143,22 +143,28 @@ def _remember_undefined(party: dict, address: dict) -> bool:
 
 
 def single_secretary_address(party: dict) -> bool:
-    """A company secretary has one current address of four fields.
+    """Drop secretary address blocks that were not filled from field 1 through field 4."""
+    return park_misfilled_addresses(party)
 
-    An outdated address stays an address. Only a block that skipped field 1 and filled
-    fields 2, 3 and 4 is moved to 未定義, and only while a second block is still present.
-    """
+
+def park_misfilled_addresses(party: dict) -> bool:
+    """An address block is fields 1, 2, 3, 4 in order. Anything else belongs in 未定義."""
     addresses = [item for item in (party.get("addresses") or []) if isinstance(item, dict)]
-    if len(addresses) <= 1:
+    if not addresses:
         return False
-    bypassed = [item for item in addresses if _is_bypass(item)]
-    if not bypassed:
-        return False
+    kept = []
     changed = False
-    for item in bypassed:
-        changed = _remember_undefined(party, item) or changed
-    party["addresses"] = [item for item in addresses if not _is_bypass(item)]
-    return True
+    for item in addresses:
+        lines = _line_list(item)
+        if any(lines) and _is_bypass(item):
+            _remember_undefined(party, item)
+            changed = True
+            continue
+        kept.append(item)
+    if len(kept) != len(addresses):
+        party["addresses"] = kept
+        changed = True
+    return changed
 
 
 def reclaim_outdated_addresses(party: dict, parsed_addresses: list) -> bool:
@@ -300,18 +306,44 @@ def stamp_id_types(party: dict) -> bool:
     return changed
 
 
+def mark_earlier_holdings(party: dict) -> bool:
+    """Only the latest holding is current. Earlier rows are the transfer history."""
+    holdings = [item for item in (party.get("shareholdings") or []) if isinstance(item, dict)]
+    current_row = party.get("current_holding_row")
+    calc = next((item for item in holdings if current_row is not None and item.get("row") == current_row
+                 and not item.get("outdated")), None)
+    if calc is None:
+        return False
+    changed = False
+    before = True
+    for item in holdings:
+        if item is calc:
+            before = False
+            desired = False
+        elif before and not item.get("outdated"):
+            desired = True
+        else:
+            desired = bool(item.get("pre_transfer"))
+        if bool(item.get("pre_transfer")) != desired:
+            item["pre_transfer"] = desired
+            changed = True
+    return changed
+
+
 def ensure_party_ids(company: dict) -> bool:
     changed = False
     for section in SECTIONS:
         for party in company.get(section) or []:
             changed = _stamp(party) or changed
             changed = stamp_id_types(party) or changed
+            changed = park_misfilled_addresses(party) or changed
             if section == "company_secretaries":
                 changed = single_secretary_address(party) or changed
             else:
                 changed = collapse_current_addresses(party) or changed
             for holding in party.get("shareholdings") or []:
                 changed = _stamp(holding) or changed
+            changed = mark_earlier_holdings(party) or changed
             for key in ("addresses", "id_numbers", "emails", "phones", "other"):
                 for item in party.get(key) or []:
                     changed = _stamp(item) or changed

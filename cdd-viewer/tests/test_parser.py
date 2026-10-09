@@ -7,7 +7,8 @@ import openpyxl
 from openpyxl.styles import PatternFill
 
 from app.excel_parser import (
-    color_name, id_document_type, is_orange, is_red, parse_date, parse_label, parse_workbook, split_address,
+    color_name, follows_address_fields, id_document_type, is_orange, is_red, parse_date, parse_label,
+    parse_workbook, split_address,
 )
 
 DUMMY = Path(os.environ.get(
@@ -21,6 +22,15 @@ class IdDocumentTypeTests(unittest.TestCase):
         self.assertEqual(id_document_type("A123456(7)"), "hkid")
         self.assertEqual(id_document_type("Passport AB1"), "passport")
         self.assertIsNone(id_document_type("12345678"))
+
+
+class AddressFieldOrderTests(unittest.TestCase):
+    def test_only_a_run_from_field_one_is_an_address(self):
+        self.assertTrue(follows_address_fields(["A", "B", "C", "D"]))
+        self.assertTrue(follows_address_fields(["A", "B", "", ""]))
+        self.assertFalse(follows_address_fields(["", "B", "C", "D"]))
+        self.assertFalse(follows_address_fields(["", "", "", "D"]))
+        self.assertFalse(follows_address_fields(["", "", "C", "D"]))
 
 
 class LabelTests(unittest.TestCase):

@@ -1,9 +1,9 @@
 import unittest
 
 from app.documents import (
-    add_party, add_record, collapse_current_addresses, reclaim_outdated_addresses, remember_merged_rows,
-    restore_address_issue_fields, retag_undefined_address_issues, set_outdated, set_value,
-    single_secretary_address, stamp_id_types,
+    add_party, add_record, collapse_current_addresses, mark_earlier_holdings, park_misfilled_addresses,
+    reclaim_outdated_addresses, remember_merged_rows, restore_address_issue_fields,
+    retag_undefined_address_issues, set_outdated, set_value, single_secretary_address, stamp_id_types,
 )
 
 
@@ -51,11 +51,39 @@ class SecretaryAddressTests(unittest.TestCase):
         self.assertTrue(party["addresses"][0]["outdated"])
         self.assertEqual([item["value"] for item in party["other"]], ["skipped"])
 
-    def test_a_single_address_stays_where_it_was_typed(self):
+    def test_a_single_skipped_address_goes_to_undefined(self):
         party = {"addresses": [{"lines": ["", "Two", "Three", "Four"], "value": "skipped", "row": 5}], "other": []}
-        self.assertFalse(single_secretary_address(party))
+        self.assertTrue(single_secretary_address(party))
+        self.assertEqual(party["addresses"], [])
+        self.assertEqual(party["other"][0]["value"], "skipped")
+
+    def test_only_field_four_is_not_an_address(self):
+        party = {"addresses": [
+            {"lines": ["A", "B", "C", "D"], "row": 1},
+            {"lines": ["", "", "", "Leftover"], "value": "Leftover", "row": 2, "outdated": True},
+        ], "other": []}
+        self.assertTrue(park_misfilled_addresses(party))
+        self.assertEqual([item["row"] for item in party["addresses"]], [1])
+        self.assertEqual(party["other"][0]["value"], "Leftover")
+        self.assertTrue(party["other"][0]["outdated"])
+
+    def test_only_the_latest_holding_stays_current(self):
+        party = {
+            "current_holding_row": 3,
+            "shareholdings": [
+                {"row": 1, "pre_transfer": False, "outdated": False, "no_of_shares": None, "transfer": {"from": "A"}},
+                {"row": 3, "pre_transfer": False, "outdated": False, "no_of_shares": 10},
+            ],
+        }
+        self.assertTrue(mark_earlier_holdings(party))
+        self.assertTrue(party["shareholdings"][0]["pre_transfer"])
+        self.assertFalse(party["shareholdings"][1]["pre_transfer"])
+        self.assertFalse(mark_earlier_holdings(party))
+
+    def test_front_filled_address_stays(self):
+        party = {"addresses": [{"lines": ["One", "Two", "", ""]}], "other": []}
+        self.assertFalse(park_misfilled_addresses(party))
         self.assertEqual(len(party["addresses"]), 1)
-        self.assertEqual(party["other"], [])
 
     def test_outdated_address_is_taken_back_from_undefined(self):
         party = {

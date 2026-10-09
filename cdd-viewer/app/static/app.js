@@ -335,15 +335,22 @@ function idRow(item, pathBase, index) {
 
 function idField(items, cls = '', issues = [], pathBase = '') {
   const list = items || [];
+  const entries = list.map((item, index) => ({ item, index }));
+  const current = entries.filter(({ item }) => !item.outdated || render.inOutdated);
+  const filled = current.filter(({ item }) => String(item.value || '').trim());
+  const chosen = (filled.length ? filled : current).slice(-1)[0];
   const visible = [];
   const old = [];
-  list.forEach((item, index) => {
-    const row = idRow(item, pathBase, index);
-    if (item.outdated && !render.inOutdated) old.push(row);
-    else visible.push(row);
-  });
-  const hasBlank = list.some((item) => !item.outdated && !String(item.value || '').trim());
-  if (pathBase && !hasBlank) visible.push(idRow({ value: '' }, pathBase, list.length));
+  if (render.inOutdated) {
+    entries.forEach(({ item, index }) => visible.push(idRow(item, pathBase, index)));
+    if (!visible.length && pathBase) visible.push(idRow({ value: '' }, pathBase, list.length));
+  } else {
+    entries.forEach(({ item, index }) => {
+      if (item.outdated) old.push(idRow(item, pathBase, index));
+    });
+    if (chosen && !chosen.item.outdated) visible.push(idRow(chosen.item, pathBase, chosen.index));
+    else if (pathBase) visible.push(idRow({ value: '' }, pathBase, list.length));
+  }
   let body = visible.join('');
   if (old.length) {
     const flagged = list.filter((item) => item.outdated && issuesAt('item', item.row).some((issue) => issue.severity !== 'info')).length;
@@ -356,15 +363,22 @@ function idField(items, cls = '', issues = [], pathBase = '') {
   return `<div class="field ${cls}${mark.cls}"${locsFrom(issues)}><label>身份證／證件 ID</label>${body}${mark.html}</div>`;
 }
 
-function listField(label, items, cls = '', issues = [], pathBase = '') {
+function listField(label, items, cls = '', issues = [], pathBase = '', extraBlank = false) {
   const list = items || [];
   const { current, outdated } = splitOutdated(list);
   const itemPath = (it) => (pathBase ? `${pathBase}/${Math.max(list.indexOf(it), 0)}/value` : '');
-  let body = current.length
-    ? current.map((it) => itemHtml(it, itemPath(it))).join('')
-    : (pathBase
-      ? itemHtml({ value: '', outdated: false, outdated_reasons: [] }, `${pathBase}/0/value`)
-      : '<div class="value empty"></div>');
+  const rows = current.map((it) => itemHtml(it, itemPath(it)));
+  if (!current.length && pathBase) rows.push(itemHtml({ value: '', outdated: false, outdated_reasons: [] }, `${pathBase}/0/value`));
+  if (!current.length && !pathBase) rows.push('<div class="value empty"></div>');
+  if (extraBlank && pathBase) {
+    const tail = current[current.length - 1];
+    const tailBlank = tail && !String(tail.value || '').trim();
+    if (!tailBlank) {
+      const index = current.length ? list.length : 1;
+      rows.push(itemHtml({ value: '', outdated: false, outdated_reasons: [] }, `${pathBase}/${index}/value`));
+    }
+  }
+  let body = rows.join('');
   if (outdated.length) {
     const flagged = outdated.filter((it) => issuesAt('item', it.row).some((i) => i.severity !== 'info')).length;
     body += `<details class="old-items"${expandAll() ? ' open' : ''}>`
@@ -445,21 +459,54 @@ function chooseAddress(items) {
   return pool.length ? pool[pool.length - 1] : null;
 }
 
+function followsAddressFields(item) {
+  if (!item) return true;
+  const lines = Array.isArray(item.lines) && item.lines.length === 4
+    ? item.lines.map((line) => String(line || '').trim())
+    : addressLines(item).map((line) => String(line || '').trim());
+  let seenEmpty = false;
+  for (const line of lines) {
+    if (!line) seenEmpty = true;
+    else if (seenEmpty) return false;
+  }
+  return true;
+}
+
+function misplacedAddresses(items, already) {
+  const rows = new Set((already || []).map((item) => item.row).filter((row) => row != null));
+  return (items || []).filter((item) => item && !followsAddressFields(item)).filter((item) => {
+    const lines = Array.isArray(item.lines) ? item.lines : [];
+    return lines.some((line) => String(line || '').trim()) || String(item.value || item.address || '').trim();
+  }).filter((item) => item.row == null || !rows.has(item.row)).map((item) => {
+    const lines = (Array.isArray(item.lines) ? item.lines : []).map((line) => String(line || '').trim()).filter(Boolean);
+    return {
+      value: item.value || item.address || lines.join(', '),
+      row: item.row,
+      column: item.column,
+      from: item.from,
+      to: item.to,
+      outdated: !!item.outdated,
+      outdated_reasons: item.outdated_reasons || [],
+      parked: true,
+    };
+  });
+}
 function addressField(items, pathBase = '', oneCurrent = false) {
-  const list = items || [];
+  const source = items || [];
+  const list = source.filter((item) => !item || followsAddressFields(item));
   const currentItems = list.filter((item) => item && !item.outdated);
   const chosen = oneCurrent ? chooseAddress(currentItems) : null;
   const current = [];
   const outdated = [];
-  list.forEach((item, index) => {
-    if (!item) return;
+  source.forEach((item, index) => {
+    if (!item || !followsAddressFields(item)) return;
     if (oneCurrent && !item.outdated && item !== chosen) return;
     const grid = addressGrid(item, [], [], pathBase ? `${pathBase}/${index}` : '');
     if (item.outdated && !render.inOutdated) outdated.push(grid);
     else current.push(grid);
   });
-  if (!current.length && (oneCurrent || !list.length)) {
-    current.push(addressGrid(null, [], [], pathBase ? `${pathBase}/${list.length}` : ''));
+  if (!current.length && (oneCurrent || !source.length)) {
+    current.push(addressGrid(null, [], [], pathBase ? `${pathBase}/${source.length}` : ''));
   }
   let body = current.join('');
   if (outdated.length) {
@@ -818,12 +865,15 @@ function trustText(trust) {
 
 function holdingRow(h, p, key) {
   const badges = [];
-  if (h.pre_transfer) badges.push('<span class="badge pre" title="轉讓前的記錄，不用作計算現時持股">轉讓前</span>');
+  const isCalc = p.current_holding_row != null && h.row === p.current_holding_row;
+  if (h.pre_transfer || (!h.outdated && !isCalc && p.current_holding_row != null)) {
+    badges.push('<span class="badge pre" title="轉讓前的記錄，不用作計算現時持股">轉讓前</span>');
+  }
   if (h.outdated && !render.inOutdated) badges.push(outdatedBadge(h));
-  if (!h.outdated && !h.pre_transfer) {
-    badges.push(h.row === p.current_holding_row
-      ? '<span class="badge ok" title="用這一行計算現時持股">現行（用作計算）</span>'
-      : '<span class="badge ok">現行</span>');
+  if (!h.outdated && !h.pre_transfer && isCalc) {
+    badges.push('<span class="badge ok" title="用這一行計算現時持股">現行（用作計算）</span>');
+  } else if (!h.outdated && !h.pre_transfer && !isCalc && p.current_holding_row == null) {
+    badges.push('<span class="badge ok">現行</span>');
   }
   const at = (issueKey) => issuesAt(issueKey, h.row);
   const base = p.party_id && h.record_id ? `${key}/${p.party_id}/shareholdings/${h.record_id}` : '';
@@ -854,13 +904,25 @@ function holdingRow(h, p, key) {
     </tr>${issueRow([...label, ...total, ...pct, ...money, ...dates, ...transfer, ...trust], 13)}`;
 }
 
+function holdingHasContent(holding) {
+  if (!holding) return false;
+  const filled = ['label', 'no_of_shares', 'total_no_of_shares', 'consideration', 'total_consideration',
+    'class', 'type', 'date', 'end_date'].some((key) => holding[key] != null && String(holding[key]).trim() !== '');
+  const transfer = holding.transfer || {};
+  const trust = holding.declaration_of_trust || {};
+  const moved = ['date', 'from', 'to', 'no_of_shares', 'consideration'].some((key) => transfer[key] != null && String(transfer[key]).trim() !== '');
+  const trusted = ['bo', 'trustee', 'date', 'shares'].some((key) => trust[key] != null && String(trust[key]).trim() !== '');
+  return filled || moved || trusted;
+}
+
 function holdingsTable(p, key) {
-  if (!p.shareholdings.length) return '';
-  let shown = p.shareholdings;
+  const holdings = (p.shareholdings || []).filter((holding) => holdingHasContent(holding));
+  if (!holdings.length) return '';
+  let shown = holdings;
   let old = [];
   if (!render.inOutdated) {
-    shown = p.shareholdings.filter((h) => !h.outdated || h.pre_transfer);
-    old = p.shareholdings.filter((h) => h.outdated && !h.pre_transfer);
+    shown = holdings.filter((h) => !h.outdated || h.pre_transfer);
+    old = holdings.filter((h) => h.outdated && !h.pre_transfer);
     if (!expandAll()) state.collapsed += old.length;
   }
   const labels = p.roles.filter((r) => r.startsWith('SH')).join('、');
@@ -895,7 +957,8 @@ function partyProblemCount(p) {
 }
 
 function partyBody(p, key) {
-  const corporate = key === 'company_secretaries' || p.ci_no || p.br_no;
+  const person = ['directors', 'shareholders', 'company_secretaries'].includes(key);
+  const corporate = person || p.ci_no || p.br_no;
   const base = p.party_id ? `${key}/${p.party_id}` : '';
   const at = (name) => (base ? `${base}/${name}` : '');
   return `
@@ -909,16 +972,13 @@ function partyBody(p, key) {
       ${dateField('委任日期 Appoint date', p.appoint_date, p.appoint_date_row, p.row, issuesAt('party.appoint_date', partyRows(p)), at('appoint_date'))}
       ${dateField('辭任日期 Resign date', p.resign_date, p.resign_date_row, p.row, issuesAt('party.resign_date', partyRows(p)), at('resign_date'))}
       <div class="field spacer"></div>
-      ${addressField(p.addresses, at('addresses'), key === 'company_secretaries')}
-      ${undefinedBlock(p.other, at('other'))}
+      ${addressField(p.addresses, at('addresses'), person)}
+      ${undefinedBlock([...(p.other || []), ...misplacedAddresses(p.addresses, p.other)], at('other'))}
       ${listField('Email', p.emails, '', [], at('emails'))}
-      ${listField('電話 Tel', p.phones, '', [], at('phones'))}
+      ${listField('電話 Tel', p.phones, '', [], at('phones'), true)}
       <div class="field spacer"></div>
     </div>
-    ${holdingsTable(p, key)}
-    ${p.party_id ? addRecordBox('HOLDING', '新增持股記錄',
-      `${textInput('No. of shares', 'no_of_shares')}${textInput('Total no. of shares', 'total_no_of_shares')}${textInput('Consideration', 'consideration')}${textInput('Class', 'class')}${textInput('Type', 'type')}${textInput('日期', 'date')}<div class="field"><label>Transfer from</label>${shSelect('', '', 'transfer_from')}</div><div class="field"><label>Transfer to</label>${shSelect('', '', 'transfer_to')}</div>`,
-      ` data-party-id="${esc(p.party_id)}"`) : ''}`;
+    ${holdingsTable(p, key)}`;
 }
 
 function partyTitle(p, key) {
