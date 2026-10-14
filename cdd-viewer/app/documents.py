@@ -449,6 +449,7 @@ def add_party(company: dict, data: dict) -> dict:
         "appoint_date_row": None,
         "resign_date": resign,
         "resign_date_row": None,
+        "ubo": str(data.get("ubo") or "").strip().lower() in {"1", "true", "yes", "on"},
         "shareholdings": [],
         "current_shares": shares,
         "current_holding_row": None,
@@ -798,6 +799,9 @@ def _set_party_value(company: dict, section: str, rest: list[str], value) -> Non
             holding["declaration_of_trust"][sub[1]] = _stored(value, numeric=sub[1] == "shares")
             return
         raise ValueError("不能修改這個欄位")
+    if key == "ubo" and not tail:
+        party["ubo"] = str(value).strip().lower() in {"1", "true", "yes", "on"}
+        return
     if key in PARTY_FIELDS and not tail:
         party[key] = _stored(value)
         if key == "resign_date":

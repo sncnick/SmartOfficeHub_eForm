@@ -227,6 +227,20 @@ tr.issue-row td { padding: 2px 8px 6px; border-bottom: 1px solid #fecaca; backgr
   font-weight: 600;
 }
 .id-tick input { width: auto; margin: 0; }
+.ubo-tick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid #1d4ed8;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 13px;
+  font-weight: 700;
+}
+.ubo-tick input { width: auto; margin: 0; }
+.add-party .ubo-tick input { padding: 0; border: none; background: transparent; }
 
 .item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .item .text { flex: 1 1 auto; }

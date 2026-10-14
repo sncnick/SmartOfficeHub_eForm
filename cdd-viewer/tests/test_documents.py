@@ -165,6 +165,10 @@ class EditFieldTests(unittest.TestCase):
         self.assertEqual(updated["directors"][0]["name_en"], "Ada")
         updated = set_value(updated, ["directors", "d1", "addresses", "0", "lines", "0"], "Queen Road")
         self.assertEqual(updated["directors"][0]["addresses"][0]["lines"][0], "Queen Road")
+        updated = set_value(updated, ["shareholders", "s1", "ubo"], "true")
+        self.assertTrue(updated["shareholders"][0]["ubo"])
+        updated = set_value(updated, ["shareholders", "s1", "ubo"], "false")
+        self.assertFalse(updated["shareholders"][0]["ubo"])
         updated = set_value(updated, ["directors", "d1", "id_numbers", "0", "value"], "A123456(7)")
         updated = set_value(updated, ["directors", "d1", "id_numbers", "0", "id_type"], "passport")
         item = updated["directors"][0]["id_numbers"][0]

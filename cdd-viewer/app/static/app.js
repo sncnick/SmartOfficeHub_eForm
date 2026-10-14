@@ -1070,6 +1070,9 @@ function addPartyBox(key) {
   const shares = kind === 'SH'
     ? '<div class="field"><label>股數</label><input name="shares" autocomplete="off"></div>'
     : '';
+  const ubo = kind === 'SH' || kind === 'CS'
+    ? '<label class="ubo-tick"><input type="checkbox" name="ubo" value="true"> 是否 UBO</label>'
+    : '';
   return `<details class="add-party"><summary>${esc(title)}</summary>
     <form data-add-party="${kind}">
       <div class="grid">
@@ -1088,9 +1091,20 @@ function addPartyBox(key) {
         <div class="field"><label>地址 3</label><input name="line3" autocomplete="off"></div>
         <div class="field"><label>地址 4</label><input name="line4" autocomplete="off"></div>
         ${shares}
+        ${ubo}
       </div>
       <button type="submit" class="btn">加入</button>
     </form></details>`;
+}
+
+function uboTick(party, key) {
+  if (key !== 'shareholders' && key !== 'company_secretaries' && !isShareholder(party, key)) return '';
+  const on = party.ubo === true || party.ubo === 'true';
+  const path = party.party_id ? `${key}/${party.party_id}/ubo` : '';
+  const bound = path
+    ? ` data-path="${esc(path)}" data-bool="1" data-saved="${on ? 'true' : 'false'}"`
+    : ' name="ubo" value="true"';
+  return `<label class="ubo-tick"><input type="checkbox"${bound}${on ? ' checked' : ''}> 是否 UBO</label>`;
 }
 
 function partyCard(p, key) {
@@ -1102,6 +1116,7 @@ function partyCard(p, key) {
   <article class="party"${rowAttr(p.row)}>
     <header>
       <span class="tag${headerIssues.cls}"${locsFrom(labelIssues)}>${esc(partyTitle(p, key))}</span>${raw}
+      ${uboTick(p, key)}
       ${stateBadge(p)}${sharesNote(p)}
       ${blockOutdatedButton(key, p)}
       ${rowRef(p)}
@@ -1124,6 +1139,7 @@ function outdatedPartyCard(p, key) {
   <details class="party outdated"${expandAll() ? ' open' : ''}${rowAttr(p.row)}${locsFrom(labelIssues)}>
     <summary>
       <span class="tag">${esc(partyTitle(p, key))}</span>${outdatedBadge(p)}
+      ${uboTick(p, key)}
       ${problems ? `<span class="badge issue" title="展開查看有問題的欄位">⚠ ${problems} 個問題</span>` : ''}
       <span class="who">${esc(name)}</span>${period ? `<span class="dates">${esc(period)}</span>` : ''}
       ${blockOutdatedButton(key, p)}
@@ -1587,6 +1603,7 @@ function setSave(text, bad = false) {
 }
 
 function controlValue(input) {
+  if (input?.dataset?.bool) return input.checked ? 'true' : 'false';
   if (input?.dataset?.idChoice) return input.checked ? input.dataset.idChoice : '';
   return input.value;
 }
@@ -1727,17 +1744,21 @@ function bindEvents() {
     if (e.target.closest('[data-slice]')) hideSliceTip();
   });
   $('#main').addEventListener('input', (e) => {
-    if (!e.target.matches('input[data-path], textarea[data-path]') || e.target.matches('[data-id-choice]')) return;
+    if (!e.target.matches('input[data-path], textarea[data-path]') || e.target.matches('[data-id-choice], [data-bool]')) return;
     clearTimeout(typingTimer);
     const field = e.target;
     typingTimer = setTimeout(() => saveField(field), 500);
   });
   $('#main').addEventListener('focusout', (e) => {
-    if (!e.target.matches('[data-path]') || e.target.matches('[data-id-choice]')) return;
+    if (!e.target.matches('[data-path]') || e.target.matches('[data-id-choice], [data-bool]')) return;
     clearTimeout(typingTimer);
     saveField(e.target);
   });
   $('#main').addEventListener('change', (e) => {
+    if (e.target.matches('input[data-bool]')) {
+      saveField(e.target);
+      return;
+    }
     const choice = e.target.closest('input[data-id-choice]');
     if (choice) {
       if (choice.checked) {
