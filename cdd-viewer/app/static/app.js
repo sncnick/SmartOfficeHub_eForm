@@ -142,6 +142,10 @@ function customLabels() {
   }
 }
 
+function orangeNote() {
+  return customLabels()['group:orange'] || COLOR_GROUP_TEXT.orange;
+}
+
 function colorLabel(hex, fallback) {
   return customLabels()[hex] || fallback || `#${hex}`;
 }
@@ -155,7 +159,8 @@ function colorField(c) {
 
 function colorText(c) {
   if (!c.label_color) return '沒有底色（非橙色）';
-  return `${colorLabel(c.label_color, c.color_name)}　#${c.label_color}（${COLOR_GROUP_TEXT[c.color_group]}）`;
+  const group = c.color_group === 'orange' ? orangeNote() : COLOR_GROUP_TEXT[c.color_group];
+  return `${colorLabel(c.label_color, c.color_name)}　#${c.label_color}（${group}）`;
 }
 
 function searchText(company) {
@@ -1339,10 +1344,14 @@ function renderFilterPanel() {
     o.count, swatch(o.hex))).join('');
   const statusRows = STATUS_OPTIONS.map(([key, label]) => option('status', key, esc(label),
     companies.filter((c) => c.status === key).length)).join('');
+  const orangeLabel = `橙色（${esc(orangeNote())}）`;
   $('#filterPanel').innerHTML = `
     <details class="filter-group" open>
       <summary>公司編號顏色</summary>
-      ${option('color', 'orange', '橙色（正常現行）', groups.orange.count, swatches(groups.orange.hexes))}
+      <div class="opt-line">
+        ${option('color', 'orange', orangeLabel, groups.orange.count, swatches(groups.orange.hexes))}
+        <button type="button" class="rename" data-rename="orange" title="改「${esc(orangeNote())}」這段標註">✎</button>
+      </div>
       <label class="opt parent${nonOrangeCount ? '' : ' empty'}">
         <input type="checkbox" id="nonOrange"${nonOrangeCount ? '' : ' disabled'}>
         <span class="lbl">非橙色（全部，需檢查／更新）</span><span class="n">${nonOrangeCount}</span>
@@ -1387,6 +1396,19 @@ function applyPreset(preset) {
   resetFilters();
   if (preset === 'orange') filters.colors = new Set(['orange']);
   if (preset === 'non-orange') filters.colors = new Set(nonOrangeKeys());
+}
+
+function renameOrangeNote() {
+  const labels = customLabels();
+  const current = orangeNote();
+  const name = window.prompt('橙色括號裡的標註可以改成其他文字。留空即還原為「正常現行」。', current);
+  if (name === null) return;
+  const text = name.trim();
+  if (!text || text === COLOR_GROUP_TEXT.orange) delete labels['group:orange'];
+  else labels['group:orange'] = text;
+  localStorage.setItem(COLOR_LABELS_KEY, JSON.stringify(labels));
+  renderFilterPanel();
+  renderCompany();
 }
 
 function renameColor(hex) {
@@ -1702,6 +1724,20 @@ function closeIssues() {
 }
 
 function bindEvents() {
+  const layout = document.querySelector('.layout');
+  const sidebarToggle = $('#sidebarToggle');
+  const applySidebar = (collapsed) => {
+    layout.classList.toggle('sidebar-collapsed', collapsed);
+    sidebarToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    sidebarToggle.title = collapsed ? '展開側欄' : '收起側欄';
+    sidebarToggle.textContent = collapsed ? '⟩' : '⟨';
+  };
+  applySidebar(localStorage.getItem('cdd-viewer.sidebar') === 'closed');
+  sidebarToggle.addEventListener('click', () => {
+    const collapsed = !layout.classList.contains('sidebar-collapsed');
+    applySidebar(collapsed);
+    localStorage.setItem('cdd-viewer.sidebar', collapsed ? 'closed' : 'open');
+  });
   $('#importFileBtn').addEventListener('click', async () => {
     const name = $('#fileSelect').value;
     if (!name) {
@@ -1744,7 +1780,9 @@ function bindEvents() {
     const rename = e.target.closest('.rename');
     if (rename) {
       e.preventDefault();
-      renameColor(rename.dataset.hex);
+      e.stopPropagation();
+      if (rename.dataset.rename === 'orange') renameOrangeNote();
+      else renameColor(rename.dataset.hex);
       return;
     }
     const preset = e.target.closest('[data-preset]');

@@ -65,24 +65,43 @@ body {
 }
 .source-bar .warn { display: block; margin-top: 3px; color: var(--warn); }
 
-.layout { flex: 1; display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
+.layout { flex: 1; display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); min-height: 0; }
+.layout.sidebar-collapsed { grid-template-columns: 44px minmax(0, 1fr); }
 
 .sidebar {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   min-height: 0;
   padding: 12px;
+  overflow: hidden;
   border-right: 1px solid var(--border);
   background: #fff;
 }
+.sidebar-toggle {
+  align-self: flex-end;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.layout.sidebar-collapsed .sidebar { align-items: center; padding: 12px 8px; }
+.layout.sidebar-collapsed .sidebar > :not(.sidebar-toggle) { display: none; }
 .sidebar input[type=search] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; }
 
 .filter-panel {
-  flex: none;
-  max-height: 46vh;
+  flex: 0 1 auto;
+  max-height: 42%;
+  min-height: 0;
   padding: 6px 8px;
-  overflow-y: auto;
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fbfcfd;
@@ -90,8 +109,10 @@ body {
 }
 .filter-group { padding: 4px 0; border-bottom: 1px dashed #e5e7eb; }
 .filter-group > summary { padding: 2px 0; color: #334155; font-weight: 600; }
-.opt { display: flex; align-items: center; gap: 6px; padding: 3px 2px; cursor: pointer; }
-.opt .lbl { flex: 1; min-width: 0; }
+.opt { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 2px; cursor: pointer; }
+.opt-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.opt-line .opt { flex: 1; }
+.opt .lbl { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .opt .n { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .opt.empty { opacity: .45; cursor: default; }
 .opt.parent .lbl { font-weight: 600; }
@@ -102,8 +123,8 @@ body {
 .filter-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
 .btn.small { padding: 3px 8px; font-size: 12px; }
 
-.company-list { flex: 1; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
-.company-list li { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; cursor: pointer; }
+.company-list { flex: 1 1 0; min-height: 8rem; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.company-list li { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 8px; border-radius: 6px; cursor: pointer; }
 .company-list li:hover { background: #f1f5f9; }
 .company-list li.active { background: #dbeafe; }
 .company-list .no { min-width: 36px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -121,12 +142,12 @@ body {
 .company-list li.is-inactive .no, .company-list li.is-inactive .name { color: var(--muted); }
 .field.inactive .value { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
 
-.main { min-height: 0; padding: 18px 24px 48px; overflow-y: auto; }
+.main { min-width: 0; min-height: 0; padding: 18px 24px 48px; overflow: auto; }
 .placeholder { padding: 60px; color: var(--muted); text-align: center; }
 
 .company-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.company-head .title { display: flex; flex: 1; align-items: center; gap: 12px; }
-.company-head h2 { margin: 0; font-size: 20px; }
+.company-head .title { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; }
+.company-head h2 { margin: 0; overflow-wrap: anywhere; font-size: 20px; }
 .company-head .sub { color: var(--muted); }
 
 .hint {
@@ -399,11 +420,26 @@ details.json pre {
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 
-@media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
-  .sidebar { max-height: 40vh; }
+@media (max-width: 1100px) {
+  .layout,
+  .layout.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .sidebar {
+    position: fixed;
+    z-index: 8;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(340px, 88vw);
+    box-shadow: 8px 0 24px rgba(15, 23, 42, .18);
+  }
+  .layout.sidebar-collapsed .sidebar {
+    width: 44px;
+    box-shadow: none;
+  }
   .grid { grid-template-columns: 1fr; }
   .span-2, .span-3 { grid-column: auto; }
+  .toolbar { width: 100%; }
+  .company-head { flex-wrap: wrap; }
 }
 
 tr.jump { cursor: pointer; }
