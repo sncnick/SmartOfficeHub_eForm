@@ -559,6 +559,24 @@ function branchRow(b) {
     </tr>${issueRow([...label, ...from, ...to], 10)}`;
 }
 
+function companyTypeTicks(general) {
+  const chosen = general?.company_type === 'private' || general?.company_type === 'public' ? general.company_type : '';
+  const box = (type, label) => {
+    const checked = chosen === type ? ' checked' : '';
+    return `<label class="id-tick"><input type="checkbox" data-path="general/company_type" data-saved="${esc(chosen)}" data-id-choice="${type}"${checked}> ${esc(label)}</label>`;
+  };
+  return `<div class="field span-3"><label>公司類別</label><span class="id-ticks">${box('private', '私人 Private')}${box('public', '公眾 Public')}</span></div>`;
+}
+
+function licenseFields(party, pathOf) {
+  const on = party.license_not_required === true || party.license_not_required === 'true';
+  const tickPath = pathOf('license_not_required');
+  const bound = tickPath
+    ? ` data-path="${esc(tickPath)}" data-bool="1" data-saved="${on ? 'true' : 'false'}"`
+    : ' name="license_not_required" value="true"';
+  return `<div class="field span-3"><label class="license-tick"><input type="checkbox"${bound}${on ? ' checked' : ''}> 無須領有牌照 Not Required to obtain a license</label></div>`
+    + field('原因 Reason', party.license_reason, 'span-2', [], pathOf('license_reason'));
+}
 function generalSection(c) {
   const g = c.general;
   const branches = splitOutdated(c.branches);
@@ -572,6 +590,7 @@ function generalSection(c) {
       ${field('CI', g.ci_no, '', [], 'general/ci_no')}
       ${field('BR', g.br_no, '', [], 'general/br_no')}
       ${field('已發行股數', c.issued_shares ?? '', '', [], 'issued_shares')}
+      ${companyTypeTicks(g)}
       ${colorField(c)}
       ${c.status_note ? field('狀態註記', c.status_note, 'span-3') : ''}
       ${c.former_names.length ? listField('舊名稱', c.former_names, 'span-3', issuesAt('general.former_names'), 'former_names') : ''}
@@ -971,6 +990,7 @@ function partyBody(p, key) {
       ${corporate ? `${field('CI', p.ci_no, '', [], at('ci_no'))}${field('BR', p.br_no, '', [], at('br_no'))}<div class="field spacer"></div>` : ''}
       ${dateField('委任日期 Appoint date', p.appoint_date, p.appoint_date_row, p.row, issuesAt('party.appoint_date', partyRows(p)), at('appoint_date'))}
       ${dateField('辭任日期 Resign date', p.resign_date, p.resign_date_row, p.row, issuesAt('party.resign_date', partyRows(p)), at('resign_date'))}
+      ${key === 'company_secretaries' ? licenseFields(p, at) : ''}
       <div class="field spacer"></div>
       ${addressField(p.addresses, at('addresses'), person)}
       ${undefinedBlock([...(p.other || []), ...misplacedAddresses(p.addresses, p.other)], at('other'))}
@@ -1073,6 +1093,10 @@ function addPartyBox(key) {
   const ubo = kind === 'SH' || kind === 'CS'
     ? '<label class="ubo-tick"><input type="checkbox" name="ubo" value="true"> 是否 UBO</label>'
     : '';
+  const license = kind === 'CS'
+    ? '<label class="license-tick"><input type="checkbox" name="license_not_required" value="true"> 無須領有牌照 Not Required to obtain a license</label>'
+      + textInput('原因 Reason', 'license_reason', 'span-2')
+    : '';
   return `<details class="add-party"><summary>${esc(title)}</summary>
     <form data-add-party="${kind}">
       <div class="grid">
@@ -1092,6 +1116,7 @@ function addPartyBox(key) {
         <div class="field"><label>地址 4</label><input name="line4" autocomplete="off"></div>
         ${shares}
         ${ubo}
+        ${license}
       </div>
       <button type="submit" class="btn">加入</button>
     </form></details>`;

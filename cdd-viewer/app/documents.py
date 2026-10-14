@@ -8,7 +8,7 @@ import uuid
 
 SECTIONS = ("directors", "shareholders", "company_secretaries", "other_parties")
 KIND_SECTION = {"DIR": "directors", "SH": "shareholders", "CS": "company_secretaries"}
-GENERAL_FIELDS = {"name_en", "name_zh", "ci_no", "br_no", "incorporation_date"}
+GENERAL_FIELDS = {"name_en", "name_zh", "ci_no", "br_no", "incorporation_date", "company_type"}
 PARTY_FIELDS = {"name_en", "name_zh", "date_of_birth", "ci_no", "br_no", "appoint_date", "resign_date"}
 LIST_FIELDS = {"id_numbers", "emails", "phones", "other"}
 SHARE_FIELDS = {
@@ -450,6 +450,8 @@ def add_party(company: dict, data: dict) -> dict:
         "resign_date": resign,
         "resign_date_row": None,
         "ubo": str(data.get("ubo") or "").strip().lower() in {"1", "true", "yes", "on"},
+        "license_not_required": str(data.get("license_not_required") or "").strip().lower() in {"1", "true", "yes", "on"},
+        "license_reason": _text(data, "license_reason") if kind == "CS" else None,
         "shareholdings": [],
         "current_shares": shares,
         "current_holding_row": None,
@@ -752,6 +754,11 @@ def set_value(company: dict, path: list, value) -> dict:
     elif root in {"former_names", "business_names"} and len(rest) == 2 and rest[1] == "value":
         item = _at(company.setdefault(root, []), rest[0], _blank_item)
         item["value"] = _stored(value) or ""
+    elif root == "general" and len(rest) == 1 and rest[0] == "company_type":
+        chosen = str(value or "").strip().lower()
+        if chosen not in {"", "private", "public"}:
+            raise ValueError("公司類別只可以是私人或公眾")
+        company.setdefault("general", {})["company_type"] = chosen or None
     elif root == "general" and len(rest) == 1 and rest[0] in GENERAL_FIELDS:
         company.setdefault("general", {})[rest[0]] = _stored(value)
     elif root == "share_capital" and len(rest) == 2 and rest[1] in SHARE_FIELDS:
@@ -801,6 +808,12 @@ def _set_party_value(company: dict, section: str, rest: list[str], value) -> Non
         raise ValueError("不能修改這個欄位")
     if key == "ubo" and not tail:
         party["ubo"] = str(value).strip().lower() in {"1", "true", "yes", "on"}
+        return
+    if key == "license_not_required" and not tail:
+        party["license_not_required"] = str(value).strip().lower() in {"1", "true", "yes", "on"}
+        return
+    if key == "license_reason" and not tail:
+        party["license_reason"] = _stored(value)
         return
     if key in PARTY_FIELDS and not tail:
         party[key] = _stored(value)

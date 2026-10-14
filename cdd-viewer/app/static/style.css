@@ -241,6 +241,15 @@ tr.issue-row td { padding: 2px 8px 6px; border-bottom: 1px solid #fecaca; backgr
 }
 .ubo-tick input { width: auto; margin: 0; }
 .add-party .ubo-tick input { padding: 0; border: none; background: transparent; }
+.license-tick {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 42rem;
+  font-weight: 700;
+}
+.license-tick input { width: auto; margin: 3px 0 0; flex: none; }
+.add-party .license-tick input { padding: 0; border: none; background: transparent; }
 
 .item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .item .text { flex: 1 1 auto; }
