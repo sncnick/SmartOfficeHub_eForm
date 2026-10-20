@@ -210,6 +210,35 @@ body.excel-resizing { cursor: col-resize; user-select: none; }
 .excel-inline .excel-live { display: inline; width: auto; }
 .excel-tick { display: inline-flex; align-items: center; vertical-align: middle; margin: 0 2px; }
 .excel-tick input { width: 14px; height: 14px; margin: 0; accent-color: #059669; }
+.excel-browser-mark {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.excel-browser-mark input { width: 14px; height: 14px; margin: 0; accent-color: #059669; pointer-events: none; }
+.excel-mark-bar,
+.excel-mark-panel {
+  position: fixed;
+  z-index: 41;
+  width: min(360px, 92vw);
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .16);
+  font-size: 13px;
+}
+.excel-mark-text,
+.excel-mark-edit { width: 100%; margin: 4px 0; padding: 6px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.excel-mark-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.excel-mark-actions button,
+.excel-mark-panel button { padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; }
+.excel-mark-hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 .excel-map-menu {
   position: fixed;
   z-index: 40;
@@ -772,3 +801,66 @@ body.excel-window .excel-pane {
   box-shadow: none;
 }
 body.excel-window .layout.excel-collapsed .excel-pane .excel-body { display: flex; }
+body.excel-form .excel-pick,
+body.excel-form #excelRead,
+body.excel-form #excelMeta,
+body.excel-form .excel-pager,
+body.excel-form #excelPop,
+body.excel-form #excelForm,
+body.excel-form .excel-head { display: none; }
+.excel-form-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.excel-form-bar button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; }
+body.excel-form .excel-fill-cell { box-shadow: none; }
+body.excel-form .excel-mark-bar,
+body.excel-form .excel-mark-panel,
+body.excel-form .excel-map-menu { display: none !important; }
+body.excel-form .excel-filled { white-space: nowrap; }
+body.excel-form .excel-form-field {
+  width: 100%;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+@media print {
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    background: #fff !important;
+  }
+  body.excel-form .excel-sheet-frame { overflow: hidden !important; }
+  body.excel-form .excel-scroll { border: 0 !important; }
+  body.excel-form .excel-form-bar,
+  body.excel-form .topbar,
+  body.excel-form .source-bar,
+  body.excel-form .sidebar,
+  body.excel-form .main { display: none !important; }
+  body.excel-form .excel-grid:not(.print-grid) td,
+  body.excel-form .excel-grid:not(.print-grid) th { border-color: transparent; }
+  body.excel-form .excel-grid,
+  body.excel-form .excel-grid td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body.excel-form .excel-pane,
+  body.excel-form .excel-body,
+  body.excel-form .excel-scroll,
+  body.excel-form .layout {
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+    height: auto !important;
+    min-height: 0 !important;
+    flex: none !important;
+    max-height: none !important;
+    background: #fff !important;
+  }
+}

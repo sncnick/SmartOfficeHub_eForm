@@ -23,7 +23,7 @@ from typing import Any
 
 import openpyxl
 from openpyxl.styles.colors import COLOR_INDEX
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter, range_boundaries
 
 from .excel_fields import fill_owners, inline_parts, preview_fill
 
@@ -1652,6 +1652,121 @@ def _column_width(ws, index: int) -> int:
     return max(2, round(width * 7 + 5))
 
 
+_PAPER_MM = {
+    1: (215.9, 279.4),
+    3: (279.4, 431.8),
+    5: (215.9, 355.6),
+    8: (297.0, 420.0),
+    9: (210.0, 297.0),
+    11: (148.0, 210.0),
+    12: (250.0, 353.0),
+    13: (176.0, 250.0),
+}
+_PAPER_NAME = {1: "letter", 5: "legal", 8: "A3", 9: "A4", 11: "A5"}
+
+
+def _inches(value, default: float) -> float:
+    return float(default if value is None else value)
+
+
+def _page_setup(ws) -> dict:
+    """Paper, orientation and margins so the web form can print like Excel."""
+    setup = ws.page_setup
+    margins = ws.page_margins
+    paper = int(setup.paperSize or 9)
+    width_mm, height_mm = _PAPER_MM.get(paper, (210.0, 297.0))
+    orientation = setup.orientation or "portrait"
+    if orientation == "landscape":
+        width_mm, height_mm = height_mm, width_mm
+    left, right = _inches(margins.left, 0.7), _inches(margins.right, 0.7)
+    top, bottom = _inches(margins.top, 0.75), _inches(margins.bottom, 0.75)
+    fit_flag = getattr(getattr(ws.sheet_properties, "pageSetUpPr", None), "fitToPage", None)
+    return {
+        "paper": _PAPER_NAME.get(paper, "A4"),
+        "orientation": orientation,
+        "margin": f"{top}in {right}in {bottom}in {left}in",
+        "fit": bool(fit_flag),
+        "scale": int(setup.scale or 100),
+        "content_width": max(1, round((width_mm - (left + right) * 25.4) * 96 / 25.4)),
+        "content_height": max(1, round((height_mm - (top + bottom) * 25.4) * 96 / 25.4)),
+        "print_gridlines": bool(getattr(ws.print_options, "gridLines", False)),
+        "print_area": _print_area(ws),
+    }
+
+
+def _print_area(ws) -> list[dict]:
+    """Excel print area as row and column bounds. Empty when the sheet has none."""
+    raw = str(getattr(ws, "print_area", None) or "").strip()
+    if not raw:
+        return []
+    areas = []
+    for piece in raw.split(","):
+        piece = piece.strip()
+        if "!" in piece:
+            piece = piece.rsplit("!", 1)[-1]
+        piece = piece.replace("$", "").strip().strip("'")
+        if not piece:
+            continue
+        try:
+            min_col, min_row, max_col, max_row = range_boundaries(piece)
+        except ValueError:
+            continue
+        areas.append({"r1": min_row, "c1": min_col, "r2": max_row, "c2": max_col})
+    return areas
+
+
+def clip_to_print_area(grid: dict) -> dict | None:
+    """Keep only rows and columns inside the Excel print area."""
+    areas = (grid.get("page") or {}).get("print_area") or []
+    if not areas:
+        return None
+    min_col = min(area["c1"] for area in areas)
+    max_col = max(area["c2"] for area in areas)
+    keys = ("cells", "borders", "fills", "fields", "fonts", "parts")
+
+    def covers(row: int, col: int) -> bool:
+        return any(area["r1"] <= row <= area["r2"] and area["c1"] <= col <= area["c2"] for area in areas)
+
+    rows = []
+    for index, item in enumerate(grid["rows"], start=1):
+        if not any(area["r1"] <= index <= area["r2"] for area in areas):
+            continue
+        cloned = dict(item)
+        for key in keys:
+            values = list(item.get(key) or [])
+            sliced = []
+            for col in range(min_col, max_col + 1):
+                source = col - 1
+                value = values[source] if source < len(values) else ("" if key == "cells" else None)
+                if not covers(index, col):
+                    value = "" if key == "cells" else None
+                sliced.append(value)
+            cloned[key] = sliced
+        rows.append({"n": index, **cloned})
+    merges = []
+    for merge in grid.get("merges") or []:
+        row_start, col_start = merge["r"], merge["c"]
+        row_end = row_start + merge["rs"] - 1
+        col_end = col_start + merge["cs"] - 1
+        if row_end < min(area["r1"] for area in areas) or row_start > max(area["r2"] for area in areas):
+            continue
+        if col_end < min_col or col_start > max_col:
+            continue
+        left, right = max(col_start, min_col), min(col_end, max_col)
+        merges.append({
+            "r": row_start,
+            "c": left - min_col + 1,
+            "rs": row_end - row_start + 1,
+            "cs": right - left + 1,
+        })
+    return {
+        "columns": grid["columns"][min_col - 1:max_col],
+        "widths": (grid.get("widths") or [])[min_col - 1:max_col],
+        "rows": rows,
+        "merges": merges,
+    }
+
+
 def _points_to_px(points: float) -> int:
     return max(1, round(float(points) * 96 / 72))
 
@@ -1709,13 +1824,18 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             ws = wb[names[0]]
         palette = _theme_palette(wb)
         fills = FillReader(wb)
+        areas = _print_area(ws)
+        area_max_row = max((area["r2"] for area in areas), default=0)
+        area_max_col = max((area["c2"] for area in areas), default=0)
+        read_rows = min(MAX_PREVIEW_ROWS, max(ws.max_row or 1, area_max_row))
+        read_cols = min(256, max(MAX_PREVIEW_COLS, area_max_col))
         stored: list[dict] = []
         width = 1
         last_used = 0
-        truncated_rows = bool(ws.max_row and ws.max_row > MAX_PREVIEW_ROWS)
-        truncated_columns = bool(ws.max_column and ws.max_column > MAX_PREVIEW_COLS)
+        truncated_rows = bool(ws.max_row and ws.max_row > read_rows)
+        truncated_columns = bool(ws.max_column and ws.max_column > read_cols)
         for index, row in enumerate(
-            ws.iter_rows(max_row=MAX_PREVIEW_ROWS, max_col=MAX_PREVIEW_COLS), start=1,
+            ws.iter_rows(max_row=read_rows, max_col=read_cols), start=1,
         ):
             texts: list[str] = []
             borders: list[dict | None] = []
@@ -1742,7 +1862,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
                     row_used = cell.column
             if row_used:
                 last_used = index
-                width = max(width, min(row_used, MAX_PREVIEW_COLS))
+                width = max(width, min(row_used, read_cols))
             stored.append({
                 "cells": texts,
                 "borders": borders,
@@ -1755,10 +1875,10 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             })
         merges = []
         for merged in ws.merged_cells.ranges:
-            if merged.min_row > MAX_PREVIEW_ROWS or merged.min_col > MAX_PREVIEW_COLS:
+            if merged.min_row > read_rows or merged.min_col > read_cols:
                 continue
-            last_row = min(merged.max_row, MAX_PREVIEW_ROWS)
-            last_col = min(merged.max_col, MAX_PREVIEW_COLS)
+            last_row = min(merged.max_row, read_rows)
+            last_col = min(merged.max_col, read_cols)
             merges.append({
                 "r": merged.min_row,
                 "c": merged.min_col,
@@ -1767,7 +1887,10 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             })
             last_used = max(last_used, last_row)
             width = max(width, last_col)
-        stored = stored[:last_used]
+        keep_rows = last_used
+        if area_max_row:
+            keep_rows = max(keep_rows, min(area_max_row, len(stored)))
+        stored = stored[:keep_rows]
         for item in stored:
             item["cells"] = (item["cells"] + [""] * width)[:width]
             item["borders"] = (item["borders"] + [None] * width)[:width]
@@ -1787,6 +1910,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             "rows": stored,
             "merges": merges,
             "gridlines": gridlines,
+            "page": _page_setup(ws),
             "truncated_rows": truncated_rows,
             "truncated_columns": truncated_columns,
         }

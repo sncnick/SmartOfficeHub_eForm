@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .documents import add_party, add_record, ensure_party_ids, set_outdated, set_value
 from .excel_fields import suggest_fields
-from .excel_parser import DEFAULT_SHEET, ParseError, parse_workbook, preview_sheet
+from .excel_parser import DEFAULT_SHEET, ParseError, clip_to_print_area, parse_workbook, preview_sheet
 from .store import get_store
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -291,10 +291,11 @@ def excel_field_choices(q: str = "", owners: str = "") -> dict:
 
 
 @app.get("/api/excel/grid")
-def excel_grid(file: str, sheet: str | None = None, start: int = 1, limit: int = 60) -> dict:
+def excel_grid(file: str, sheet: str | None = None, start: int = 1, limit: int = 60,
+               within_print: bool = False) -> dict:
     """One page of a workbook for the side reader. This does not change the database."""
     path = _resolve(file)
-    limit = max(1, min(int(limit), 200))
+    limit = max(1, min(int(limit), 8000 if within_print else 200))
     start = max(1, int(start))
     try:
         grid = _cached_preview(path, sheet or None)
@@ -303,32 +304,48 @@ def excel_grid(file: str, sheet: str | None = None, start: int = 1, limit: int =
     except READ_ERRORS as exc:
         log.warning("cannot preview %s: %s", path.name, exc)
         raise HTTPException(422, "無法讀取這個 Excel 檔") from exc
-    rows = grid["rows"]
-    page = rows[start - 1:start - 1 + limit]
-    end_row = start + len(page) - 1
-    columns = len(grid["columns"])
+    clipped = clip_to_print_area(grid) if within_print else None
+    if clipped:
+        numbered = clipped["rows"]
+        columns = clipped["columns"]
+        widths = clipped["widths"]
+        all_merges = clipped["merges"]
+    else:
+        numbered = [{"n": index, **item} for index, item in enumerate(grid["rows"], start=1)]
+        columns = grid["columns"]
+        widths = grid.get("widths") or []
+        all_merges = grid.get("merges") or []
+    page = numbered[start - 1:start - 1 + limit]
+    visible_rows = {item["n"] for item in page}
+    column_count = len(columns)
     merges = []
-    for merge in grid.get("merges") or []:
+    if not visible_rows:
+        all_merges = []
+    for merge in all_merges:
         last_row = merge["r"] + merge["rs"] - 1
         last_col = merge["c"] + merge["cs"] - 1
-        if last_row < start or merge["r"] > end_row or last_col < 1 or merge["c"] > columns:
+        if last_row < min(visible_rows, default=0) or merge["r"] > max(visible_rows, default=0):
+            continue
+        if last_col < 1 or merge["c"] > column_count:
             continue
         merges.append(merge)
     return {
         "file": file,
         "sheet": grid["sheet"],
         "sheets": grid["sheets"],
-        "columns": grid["columns"],
-        "widths": grid.get("widths") or [],
+        "columns": columns,
+        "widths": widths,
+        "print_area": bool(clipped),
         "default_font_size": grid.get("default_font_size") or 11,
         "default_row_height": grid.get("default_row_height") or 20,
         "gridlines": grid.get("gridlines", True),
+        "page": grid.get("page") or {},
         "merges": merges,
-        "row_count": len(rows),
+        "row_count": len(numbered),
         "start": start,
         "truncated_rows": grid["truncated_rows"],
         "truncated_columns": grid["truncated_columns"],
-        "rows": [{"n": start + index, **item} for index, item in enumerate(page)],
+        "rows": page,
     }
 
 

@@ -167,6 +167,65 @@ class PreviewSheetTests(unittest.TestCase):
         self.assertEqual(ellipsis[1]["text"], " Formation of a new company 成立新公司")
         self.assertEqual(inline_parts("[[...]] yes")[0], {"tick": True})
 
+    def test_preview_keeps_excel_print_setup(self):
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet["A1"] = "Form"
+        sheet.page_setup.paperSize = 9
+        sheet.page_setup.orientation = "landscape"
+        sheet.page_setup.fitToWidth = 1
+        sheet.page_setup.fitToHeight = 1
+        sheet.sheet_properties.pageSetUpPr.fitToPage = True
+        sheet.page_margins.left = 0.5
+        sheet.page_margins.right = 0.5
+        buffer = BytesIO()
+        book.save(buffer)
+        page = preview_sheet(buffer.getvalue(), "CDD")["page"]
+        self.assertEqual(page["paper"], "A4")
+        self.assertEqual(page["orientation"], "landscape")
+        self.assertTrue(page["fit"])
+        self.assertTrue(page["margin"].endswith("0.5in"))
+        self.assertEqual(page["print_area"], [])
+
+    def test_print_area_limits_the_form_rows_and_columns(self):
+        from app.excel_parser import clip_to_print_area
+
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet["A1"] = "outside"
+        sheet["B2"] = "inside"
+        sheet["C4"] = "edge"
+        sheet["D5"] = "outside-too"
+        sheet.print_area = "B2:C4"
+        buffer = BytesIO()
+        book.save(buffer)
+        grid = preview_sheet(buffer.getvalue(), "CDD")
+        self.assertEqual(grid["page"]["print_area"], [{"r1": 2, "c1": 2, "r2": 4, "c2": 3}])
+        clipped = clip_to_print_area(grid)
+        self.assertEqual(clipped["columns"], ["B", "C"])
+        self.assertEqual([row["n"] for row in clipped["rows"]], [2, 3, 4])
+        self.assertEqual(clipped["rows"][0]["cells"][0], "inside")
+        self.assertNotIn("outside-too", clipped["rows"][-1]["cells"])
+
+    def test_print_area_keeps_columns_past_the_preview_cap(self):
+        from app.excel_parser import clip_to_print_area
+
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet["A1"] = "start"
+        sheet["AS3"] = "far"
+        sheet.print_area = "A1:AS5"
+        buffer = BytesIO()
+        book.save(buffer)
+        grid = preview_sheet(buffer.getvalue(), "CDD")
+        clipped = clip_to_print_area(grid)
+        self.assertEqual(clipped["columns"][-1], "AS")
+        self.assertEqual(len(clipped["rows"]), 5)
+        self.assertEqual(clipped["rows"][2]["cells"][-1], "far")
+
 
 class LabelTests(unittest.TestCase):
     def test_role_variants_are_normalised(self):

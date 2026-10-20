@@ -7,7 +7,7 @@ alwaysApply: true
 
 agent 讀取或輸出的任何內容都會傳送到 Cursor 和模型供應商，所以真實客戶資料一律不可以經過 agent。
 
-- 唯一可用的測試資料是 `Database purge/CDD base dummy.xlsx`。
+- 唯一可用的測試資料是 `Database purge/CDD base dummy.xlsx` 和 `Database purge/Dummy_form.xlsx`。
 - 不可以讀取、搜尋、列出或開啟 `WR Consultant` 內 `Company_List/tools` 以外的任何檔案或資料夾；檔名本身也可能含有客戶名稱。
 - 在 `tools` 內，也不可以讀取 dummy 以外的 Excel、CSV、PDF、Word，或 `cdd-viewer/output/` 內 dummy 以外的 JSON。
 - 不可以讀取這個專案的舊對話記錄（agent-transcripts）或終端機記錄（terminals）。
