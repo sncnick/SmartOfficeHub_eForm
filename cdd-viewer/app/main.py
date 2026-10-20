@@ -19,6 +19,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from starlette.concurrency import run_in_threadpool
 
 from .documents import add_party, add_record, ensure_party_ids, set_outdated, set_value
+from .excel_fields import suggest_fields
 from .excel_parser import DEFAULT_SHEET, ParseError, parse_workbook, preview_sheet
 from .store import get_store
 
@@ -282,6 +283,13 @@ def _cached_preview(path: Path, sheet: str | None) -> dict:
     return data
 
 
+@app.get("/api/excel/fields")
+def excel_field_choices(q: str = "", owners: str = "") -> dict:
+    """Searchable fields for a ``[[]]`` cell. This does not read the workbook."""
+    chosen = [part.strip() for part in owners.split(",") if part.strip()]
+    return {"fields": suggest_fields(q, chosen)}
+
+
 @app.get("/api/excel/grid")
 def excel_grid(file: str, sheet: str | None = None, start: int = 1, limit: int = 60) -> dict:
     """One page of a workbook for the side reader. This does not change the database."""
@@ -312,6 +320,8 @@ def excel_grid(file: str, sheet: str | None = None, start: int = 1, limit: int =
         "sheets": grid["sheets"],
         "columns": grid["columns"],
         "widths": grid.get("widths") or [],
+        "default_font_size": grid.get("default_font_size") or 11,
+        "default_row_height": grid.get("default_row_height") or 20,
         "gridlines": grid.get("gridlines", True),
         "merges": merges,
         "row_count": len(rows),

@@ -10,6 +10,7 @@ from app.excel_parser import (
     color_name, follows_address_fields, id_document_type, is_orange, is_red, parse_date, parse_label,
     parse_workbook, preview_sheet, split_address,
 )
+from app.excel_fields import fill_owners, resolve_fill_token, suggest_fields
 
 DUMMY = Path(os.environ.get(
     "CDD_TEST_FILE",
@@ -65,6 +66,92 @@ class PreviewSheetTests(unittest.TestCase):
         self.assertEqual(len(preview["rows"]), 3)
         self.assertEqual(preview["merges"], [{"r": 2, "c": 1, "rs": 1, "cs": 2}])
         self.assertTrue(preview["gridlines"])
+
+    def test_preview_keeps_column_width_row_height_and_font_size(self):
+        from openpyxl.styles import Font
+
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet.column_dimensions["B"].width = 30
+        sheet.row_dimensions[1].height = 30
+        sheet["B1"] = "Wide"
+        sheet["B1"].font = Font(name="Calibri", size=18, bold=True)
+        buffer = BytesIO()
+        book.save(buffer)
+        preview = preview_sheet(buffer.getvalue(), "CDD")
+        self.assertEqual(preview["widths"][1], round(30 * 7 + 5))
+        self.assertEqual(preview["rows"][0]["height"], round(30 * 96 / 72))
+        self.assertEqual(preview["rows"][0]["fonts"][1], {"s": 18.0, "b": True})
+
+    def test_cell_mark_and_comment_become_fillable_fields(self):
+        from openpyxl.comments import Comment
+
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet["A1"] = "[[company.name_en]]"
+        sheet["B1"] = "Ada"
+        sheet["B1"].comment = Comment("DIR1.dob", "CDD")
+        sheet["C1"] = "[[not.a.field]]"
+        buffer = BytesIO()
+        book.save(buffer)
+        preview = preview_sheet(buffer.getvalue(), "CDD")
+        row = preview["rows"][0]
+        self.assertEqual(row["cells"][0], "")
+        self.assertEqual(row["fields"][0]["key"], "company.name_en")
+        self.assertEqual(row["fields"][0]["kind"], "text")
+        self.assertEqual(row["cells"][1], "Ada")
+        self.assertEqual(row["fields"][1]["key"], "DIR1.dob")
+        self.assertEqual(row["cells"][2], "[[not.a.field]]")
+        self.assertIsNone(row["fields"][2])
+
+    def test_empty_brackets_wait_for_a_field_choice(self):
+        from openpyxl.comments import Comment
+
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet["A1"] = "Dir 1"
+        sheet["B1"] = "[[]]"
+        sheet["C1"] = "Ada"
+        sheet["C1"].comment = Comment("[[ ]]", "CDD")
+        sheet["D1"] = "[[company.name_en]]"
+        buffer = BytesIO()
+        book.save(buffer)
+        preview = preview_sheet(buffer.getvalue(), "CDD")
+        row = preview["rows"][0]
+        self.assertEqual(row["owners"], ["DIR1"])
+        self.assertEqual(row["cells"][1], "")
+        self.assertEqual(row["fields"][1]["kind"], "pick")
+        self.assertEqual(row["cells"][2], "Ada")
+        self.assertEqual(row["fields"][2]["kind"], "pick")
+        self.assertEqual(row["fields"][3]["key"], "company.name_en")
+
+    def test_fill_tokens_follow_the_form_fields(self):
+        self.assertEqual(resolve_fill_token("company.type")["kind"], "choice")
+        self.assertEqual(resolve_fill_token("SH1.transfer.from")["key"], "SH1.transfer.from")
+        self.assertEqual(resolve_fill_token("CS.license")["kind"], "bool")
+        self.assertIsNone(resolve_fill_token("DIR1.license"))
+        self.assertEqual(resolve_fill_token("BR001.address.4")["key"], "BR001.address.4")
+        self.assertEqual(resolve_fill_token("RO.from")["key"], "RO.from")
+        self.assertIsNone(resolve_fill_token("Ada"))
+
+    def test_field_search_prefers_the_row_owner(self):
+        self.assertEqual(fill_owners("Dir 1, SH1"), ["DIR1", "SH1"])
+        self.assertEqual(fill_owners("RO"), ["RO"])
+        self.assertEqual(fill_owners("BR 001"), ["BR001"])
+        self.assertEqual(fill_owners("351"), ["company"])
+        self.assertEqual(fill_owners("[[]]"), [])
+        english = suggest_fields("英文", ["DIR1"])
+        self.assertEqual(english[0]["key"], "DIR1.name_en")
+        self.assertIn("company.name_en", [item["key"] for item in english])
+        self.assertEqual(suggest_fields("DIR2 電話")[0]["key"], "DIR2.tel")
+        self.assertEqual(suggest_fields("com sec 牌照")[0]["key"], "CS.license")
+        self.assertFalse(any(item["key"].endswith(".license") for item in suggest_fields("牌照", ["DIR1"])))
+        self.assertEqual(suggest_fields("BR001 地址")[0]["key"], "BR001.address.1")
+        self.assertEqual(suggest_fields("", ["RO"])[0]["key"], "RO.address.1")
+        self.assertEqual(suggest_fields("company.type")[0]["kind"], "choice")
 
 
 class LabelTests(unittest.TestCase):

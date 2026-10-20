@@ -25,6 +25,8 @@ import openpyxl
 from openpyxl.styles.colors import COLOR_INDEX
 from openpyxl.utils import get_column_letter
 
+from .excel_fields import fill_owners, preview_fill
+
 SCHEMA_VERSION = 1
 DEFAULT_SHEET = "CDD"
 DEFAULT_OUTDATED_FILLS = frozenset({"00B0F0"})
@@ -1636,12 +1638,58 @@ def _cell_border(cell, palette: dict[str, str]) -> dict | None:
 
 
 def _column_width(ws, index: int) -> int:
+    """Excel character width as CSS pixels, using the Calibri 11 column formula."""
     letter = get_column_letter(index)
     dimension = ws.column_dimensions.get(letter)
+    if dimension is not None and dimension.hidden:
+        return 0
     width = dimension.width if dimension is not None and dimension.width else None
     if not width:
         width = getattr(ws.sheet_format, "defaultColWidth", None) or 8.43
-    return max(48, round(float(width) * 8))
+    width = float(width)
+    if width < 1:
+        return max(2, round(width * 12))
+    return max(2, round(width * 7 + 5))
+
+
+def _points_to_px(points: float) -> int:
+    return max(1, round(float(points) * 96 / 72))
+
+
+def _cell_font(cell, palette: dict[str, str]) -> dict | None:
+    font = getattr(cell, "font", None)
+    if font is None:
+        return None
+    spec: dict = {}
+    if font.sz is not None and float(font.sz) != 11:
+        spec["s"] = float(font.sz)
+    if font.b:
+        spec["b"] = True
+    if font.i:
+        spec["i"] = True
+    name = font.name
+    if name and name.lower() not in {"calibri", "等线"}:
+        spec["f"] = name
+    color = _style_color(font.color, palette)
+    if color and color != "000000":
+        spec["c"] = color
+    if getattr(getattr(cell, "alignment", None), "wrap_text", None):
+        spec["w"] = True
+    return spec or None
+
+
+def _row_height(ws, index: int, fonts: list[dict | None]) -> int:
+    dimension = ws.row_dimensions[index]
+    if getattr(dimension, "hidden", False):
+        return 0
+    if dimension.height:
+        return _points_to_px(dimension.height)
+    sizes = [item["s"] for item in fonts if item and item.get("s")]
+    points = (max(sizes) if sizes else 11) * 15 / 11
+    default = getattr(ws.sheet_format, "defaultRowHeight", None)
+    if not sizes and default:
+        points = float(default)
+    return _points_to_px(points)
 
 
 def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) -> dict:
@@ -1672,20 +1720,36 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             texts: list[str] = []
             borders: list[dict | None] = []
             paints: list[str | None] = []
+            marked: list[dict | None] = []
+            fonts: list[dict | None] = []
             row_used = 0
             for cell in row:
                 text = _preview_text(cell.value)
+                comment = getattr(cell, "comment", None)
+                note = str(getattr(comment, "text", "") or "") if comment is not None else ""
+                spec, shown = preview_fill(text, note)
                 border = _cell_border(cell, palette)
                 paint = fills(cell)
-                texts.append(text)
+                font = _cell_font(cell, palette)
+                texts.append(shown)
                 borders.append(border)
                 paints.append(paint)
-                if text or border or paint:
+                marked.append(spec)
+                fonts.append(font)
+                if shown or spec or border or paint or font:
                     row_used = cell.column
             if row_used:
                 last_used = index
                 width = max(width, min(row_used, MAX_PREVIEW_COLS))
-            stored.append({"cells": texts, "borders": borders, "fills": paints})
+            stored.append({
+                "cells": texts,
+                "borders": borders,
+                "fills": paints,
+                "fields": marked,
+                "fonts": fonts,
+                "height": _row_height(ws, index, fonts),
+                "owners": fill_owners(texts[0] if texts else ""),
+            })
         merges = []
         for merged in ws.merged_cells.ranges:
             if merged.min_row > MAX_PREVIEW_ROWS or merged.min_col > MAX_PREVIEW_COLS:
@@ -1705,6 +1769,8 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             item["cells"] = (item["cells"] + [""] * width)[:width]
             item["borders"] = (item["borders"] + [None] * width)[:width]
             item["fills"] = (item["fills"] + [None] * width)[:width]
+            item["fields"] = (item["fields"] + [None] * width)[:width]
+            item["fonts"] = (item["fonts"] + [None] * width)[:width]
         view = ws.sheet_view
         gridlines = True if view.showGridLines is None else bool(view.showGridLines)
         return {
@@ -1712,6 +1778,8 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             "sheets": names,
             "columns": [get_column_letter(i) for i in range(1, width + 1)],
             "widths": [_column_width(ws, i) for i in range(1, width + 1)],
+            "default_font_size": 11,
+            "default_row_height": _points_to_px(getattr(ws.sheet_format, "defaultRowHeight", None) or 15),
             "rows": stored,
             "merges": merges,
             "gridlines": gridlines,

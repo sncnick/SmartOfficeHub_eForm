@@ -36,9 +36,13 @@
       <div class="placeholder">載入中…</div>
     </main>
     <aside class="excel-pane" id="excelPane">
+      <div class="excel-resize" id="excelResize" role="separator" aria-orientation="vertical" aria-label="拉動調整 Excel 寬度" title="拉動調整寬度，雙按還原"></div>
       <button type="button" class="sidebar-toggle" id="excelToggle" aria-expanded="false" title="展開 Excel">Excel</button>
-      <div class="excel-body">
-        <h2>Excel</h2>
+      <div class="excel-body" id="excelBody">
+        <div class="excel-head">
+          <h2>Excel</h2>
+          <button type="button" class="btn small" id="excelPop" title="開新視窗">彈出視窗</button>
+        </div>
         <label class="excel-pick">檔案
           <select id="excelFile" aria-label="要閱讀的 Excel"></select>
         </label>
@@ -46,7 +50,7 @@
           <select id="excelSheet" aria-label="工作表"></select>
         </label>
         <button type="button" class="btn" id="excelRead">讀取</button>
-        <p class="muted small" id="excelMeta">選擇檔案後按讀取。這不會改資料庫。</p>
+        <p class="muted small" id="excelMeta">選擇檔案後按讀取。儲存格寫 [[]] 後，該格會變成可搜尋的下拉選單。這不會改資料庫。</p>
         <div class="excel-scroll" id="excelScroll"></div>
         <div class="excel-pager">
           <button type="button" class="btn small" id="excelPrev" disabled>上一頁</button>

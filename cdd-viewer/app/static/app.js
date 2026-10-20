@@ -1898,12 +1898,286 @@ function excelBorderStyle(border) {
   )).join(';');
 }
 
+const EXCEL_MAPS_KEY = 'cdd-viewer.excel-maps';
+const EXCEL_ID_OPTIONS = [{ value: 'hkid', label: 'HKID' }, { value: 'passport', label: 'Passport' }];
+const EXCEL_TYPE_OPTIONS = [{ value: 'private', label: '私人 Private' }, { value: 'public', label: '公眾 Public' }];
+const EXCEL_COMPANY_FIELDS = [
+  ['no', '公司編號', 'text'], ['name_en', '英文名稱', 'text'], ['name_zh', '中文名稱', 'text'],
+  ['ci', 'CI', 'text'], ['br', 'BR', 'text'], ['incorporation', '成立日期', 'date'],
+  ['issued_shares', '已發行股數', 'number'], ['type', '公司類別', 'choice'],
+];
+const EXCEL_BASIC_FIELDS = [
+  ['name_en', '英文名稱', 'text'], ['name_zh', '中文名稱', 'text'], ['dob', '出生日期', 'date'],
+  ['id', '證件號碼', 'text'], ['id_type', '證件種類', 'choice'], ['ci', 'CI', 'text'], ['br', 'BR', 'text'],
+  ['email', 'Email', 'text'], ['tel', '電話', 'text'], ['appoint', '委任日期', 'date'],
+  ['resign', '辭任日期', 'date'], ['ubo', '是否 UBO', 'bool'],
+  ['shares', '股數', 'number'], ['share_total', '累計股數', 'number'], ['consideration', '代價', 'number'],
+  ['total_consideration', '總代價', 'number'], ['share_class', '股份類別', 'text'], ['share_type', '股份種類', 'text'],
+  ['share_date', '持股日期', 'date'], ['share_end', '持股結束日期', 'date'],
+];
+const EXCEL_TRANSFER_FIELDS = [
+  ['transfer.date', '轉讓日期', 'date'], ['transfer.from', '轉讓自', 'text'], ['transfer.to', '轉讓至', 'text'],
+  ['transfer.shares', '轉讓股數', 'number'], ['transfer.consideration', '轉讓代價', 'number'],
+];
+const EXCEL_TRUST_FIELDS = [
+  ['trust.bo', 'DT BO', 'text'], ['trust.trustee', 'DT Trustee', 'text'],
+  ['trust.date', 'DT 日期', 'date'], ['trust.shares', 'DT 股數', 'number'],
+];
+const EXCEL_CAPITAL_FIELDS = [
+  ['no_of_shares', '股數', 'number'], ['total_no_of_shares', '累計股數', 'number'],
+  ['consideration', '代價', 'number'], ['total_consideration', '總代價', 'number'],
+  ['currency', '貨幣', 'text'], ['class', '類別', 'text'], ['type', '種類', 'text'], ['date', '日期', 'date'],
+];
+
+function loadExcelMaps() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(EXCEL_MAPS_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function excelMapId(file, sheet, row, col) {
+  return `${file}\t${sheet}\t${row}\t${col}`;
+}
+
+function usableExcelMap(spec) {
+  return Boolean(spec && spec.key && spec.label && spec.kind && spec.kind !== 'pick');
+}
+
+function excelSpec(key, label, kind, options, group) {
+  return { key, label, kind, options: options || [], group };
+}
+
+function canonExcelOwner(value) {
+  let text = String(value || '').replace(/\s+/g, '').toUpperCase().replace(/!/g, '1');
+  if (text === '公司' || text === 'COMPANY') return 'company';
+  if (text === '註冊地址' || text === 'RO') return 'RO';
+  if (text === '股本' || text === 'SHARES') return 'SHARES';
+  if (text.startsWith('COMSEC')) text = `CS${text.slice(6)}`;
+  if (text.startsWith('DR') && !text.startsWith('DIR')) text = `DIR${text.slice(2)}`;
+  if (/^(?:DIR|SH|CS)(?:\d+(?:-\d+(?:\.\d+)?)?)?$/.test(text) || /^BR[0-9A-Z-]+$/.test(text)) return text;
+  return '';
+}
+
+function ownersFromLabel(value) {
+  const text = String(value || '').trim();
+  if (!text || isUnmappedMark(text)) return [];
+  if (/^\d+$/.test(text) || text === '?' || text === '??') return ['company'];
+  if (/^ro$/i.test(text)) return ['RO'];
+  if (/^shares$/i.test(text)) return ['SHARES'];
+  const branch = text.match(/^br\s*([0-9a-z-]+)/i);
+  if (branch && text.replace(/^br\s*[0-9a-z-]+/i, '').trim() === '') return [`BR${branch[1].toUpperCase()}`];
+  const upper = text.toUpperCase().replace(/!/g, '1');
+  const tokens = [...upper.matchAll(/(COM\s?SEC|DIR|DR|SH|CS)\s*(\d+(?:[-.]\d+)*)?/g)];
+  if (!tokens.length || upper.replace(/(COM\s?SEC|DIR|DR|SH|CS)\s*(\d+(?:[-.]\d+)*)?/g, '').replace(/[\s,&/+.-]/g, '')) return [];
+  const shared = tokens.map((token) => token[2]).find(Boolean) || '';
+  const owners = [];
+  tokens.forEach((token) => {
+    const name = token[1].startsWith('COM') ? 'CS' : (token[1] === 'DR' ? 'DIR' : token[1]);
+    const owner = canonExcelOwner(name + (token[2] || shared));
+    if (owner && !owners.includes(owner)) owners.push(owner);
+  });
+  return owners;
+}
+
+function isUnmappedMark(value) {
+  return /^\s*\[\[\s*\]\]\s*$/.test(String(value || '')) || /^\s*［［\s*］］\s*$/.test(String(value || ''));
+}
+
+function fieldsForOwner(owner) {
+  const canon = canonExcelOwner(owner);
+  if (!canon) return [];
+  if (canon === 'company') {
+    return EXCEL_COMPANY_FIELDS.map(([key, label, kind]) => excelSpec(
+      `company.${key}`, label, kind, kind === 'choice' ? EXCEL_TYPE_OPTIONS : [], '公司',
+    ));
+  }
+  if (canon === 'RO') {
+    return [1, 2, 3, 4].map((line) => excelSpec(`RO.address.${line}`, `RO 地址 ${line}`, 'text', [], '註冊地址'))
+      .concat([
+        excelSpec('RO.from', 'RO 開始日期', 'date', [], '註冊地址'),
+        excelSpec('RO.to', 'RO 結束日期', 'date', [], '註冊地址'),
+      ]);
+  }
+  if (canon === 'SHARES') {
+    return EXCEL_CAPITAL_FIELDS.map(([key, label, kind]) => excelSpec(`SHARES.${key}`, `股本 ${label}`, kind, [], '股本'));
+  }
+  if (canon.startsWith('BR')) {
+    return [1, 2, 3, 4].map((line) => excelSpec(`${canon}.address.${line}`, `${canon} 地址 ${line}`, 'text', [], '分行'))
+      .concat([
+        excelSpec(`${canon}.from`, `${canon} 開始日期`, 'date', [], '分行'),
+        excelSpec(`${canon}.to`, `${canon} 結束日期`, 'date', [], '分行'),
+        excelSpec(`${canon}.br`, `${canon} BR`, 'text', [], '分行'),
+      ]);
+  }
+  const basic = EXCEL_BASIC_FIELDS.map(([key, label, kind]) => excelSpec(
+    `${canon}.${key}`, `${canon} ${label}`, kind, kind === 'choice' ? EXCEL_ID_OPTIONS : [], '人物',
+  ));
+  const address = [1, 2, 3, 4].map((line) => excelSpec(`${canon}.address.${line}`, `${canon} 地址 ${line}`, 'text', [], '人物'))
+    .concat([
+      excelSpec(`${canon}.address.from`, `${canon} 地址開始日期`, 'date', [], '人物'),
+      excelSpec(`${canon}.address.to`, `${canon} 地址結束日期`, 'date', [], '人物'),
+    ]);
+  const transfer = EXCEL_TRANSFER_FIELDS.map(([key, label, kind]) => excelSpec(`${canon}.${key}`, `${canon} ${label}`, kind, [], '人物'));
+  const trust = EXCEL_TRUST_FIELDS.map(([key, label, kind]) => excelSpec(`${canon}.${key}`, `${canon} ${label}`, kind, [], '人物'));
+  const license = canon.startsWith('CS') ? [
+    excelSpec(`${canon}.license`, `${canon} 無須領有牌照`, 'bool', [], '人物'),
+    excelSpec(`${canon}.license_reason`, `${canon} 牌照原因`, 'text', [], '人物'),
+  ] : [];
+  return basic.concat(address, transfer, trust, license);
+}
+
+function suggestExcelFields(query, owners) {
+  const text = String(query || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  const hint = [];
+  (owners || []).forEach((owner) => {
+    const canon = canonExcelOwner(owner);
+    if (canon && !hint.includes(canon)) hint.push(canon);
+  });
+  const typed = [];
+  const words = [];
+  const pattern = /com\s*sec(?:\s*\d+(?:-\d+(?:\.\d+)?)?)?|公司|註冊地址|股本|\bcompany\b|\bshares\b|br\s*[0-9A-Za-z-]+|(?:dir|dr|sh|cs)\s*\d+(?:-\d+(?:\.\d+)?)?|\bro\b|\b(?:dir|dr|sh|cs)\b/gi;
+  let position = 0;
+  let found = pattern.exec(text);
+  while (found) {
+    const gap = text.slice(position, found.index).replace(/^[\s.]+|[\s.]+$/g, '');
+    if (gap) words.push(...gap.split(/\s+/));
+    const owner = canonExcelOwner(found[0]);
+    if (owner && !typed.includes(owner)) typed.push(owner);
+    position = found.index + found[0].length;
+    found = pattern.exec(text);
+  }
+  const tail = text.slice(position).replace(/^[\s.]+|[\s.]+$/g, '');
+  if (tail) words.push(...tail.split(/\s+/).filter(Boolean));
+  const targets = typed.length ? typed : hint;
+  const poolOwners = words.length ? targets.slice() : (targets.length ? targets : ['company', 'RO', 'SHARES']);
+  if (words.length && !typed.length) {
+    ['company', 'RO', 'SHARES'].forEach((extra) => {
+      if (!poolOwners.includes(extra)) poolOwners.push(extra);
+    });
+  }
+  const seen = new Set();
+  const pool = [];
+  poolOwners.forEach((owner) => {
+    fieldsForOwner(owner).forEach((spec) => {
+      if (seen.has(spec.key)) return;
+      seen.add(spec.key);
+      pool.push(spec);
+    });
+  });
+  const filtered = words.length ? pool.filter((spec) => {
+    const hay = `${spec.group} ${spec.label} ${spec.key} ${(spec.options || []).map((item) => item.label).join(' ')}`.toLowerCase();
+    return words.every((word) => hay.includes(word.toLowerCase()));
+  }) : pool;
+  const ranked = filtered.map((spec, index) => {
+    const owner = spec.key.split('.')[0];
+    let score = owner && typed.includes(owner) ? 5 : 0;
+    if (!score && hint.includes(owner)) score = 3;
+    if (words.length && words.every((word) => spec.label.toLowerCase().includes(word.toLowerCase()))) score += 2;
+    if (text.toLowerCase() === spec.key.toLowerCase()) score += 10;
+    return { spec, index, score };
+  });
+  ranked.sort((a, b) => b.score - a.score || a.index - b.index);
+  return ranked.slice(0, 40).map((item) => item.spec);
+}
+
+function excelSelectHtml(fields) {
+  const empty = '<option value="">選擇欄位</option>';
+  if (!fields.length) return `${empty}<option value="" disabled>沒有相符欄位</option>`;
+  return empty + fields.map((field) => {
+    const spec = JSON.stringify({
+      key: field.key, label: field.label, kind: field.kind, options: field.options || [], group: field.group || '',
+    });
+    const text = field.group ? `${field.group} · ${field.label}` : field.label;
+    return `<option data-map-spec="${esc(spec)}">${esc(text)}</option>`;
+  }).join('');
+}
+
+function shiftPendingMaps(delta) {
+  const meta = $('#excelMeta');
+  const match = meta.textContent.match(/(\d+) 格未對應/);
+  if (!match) return;
+  const next = Number(match[1]) + delta;
+  meta.textContent = next > 0
+    ? meta.textContent.replace(`${match[1]} 格未對應`, `${next} 格未對應`)
+    : meta.textContent.replace(/[，、]?\d+ 格未對應/, '');
+}
+
+function commitExcelMap(cell, field) {
+  if (!cell || !usableExcelMap(field)) return;
+  const row = cell.dataset.excelRow;
+  const col = cell.dataset.excelCol;
+  const maps = loadExcelMaps();
+  maps[excelMapId($('#excelFile').value, $('#excelSheet').value, row, col)] = {
+    key: field.key,
+    label: field.label,
+    kind: field.kind,
+    options: field.options || [],
+    group: field.group || '',
+  };
+  localStorage.setItem(EXCEL_MAPS_KEY, JSON.stringify(maps));
+  cell.innerHTML = excelMappedControl(field, cell.dataset.excelValue || '', row, col, true);
+  shiftPendingMaps(-1);
+}
+
+function excelPickControl(owners, value) {
+  const ownerName = { company: '公司', RO: '註冊地址', SHARES: '股本' };
+  const names = owners.map((owner) => ownerName[owner] || owner);
+  const hint = names.length ? `搜尋 ${names.join('、')} 的欄位` : '搜尋欄位';
+  const shown = value
+    ? `<span class="excel-map-value" title="${esc(value)}">${esc(value)}</span>`
+    : '';
+  return `${shown}<div class="excel-map">`
+    + `<input type="search" class="excel-map-query" placeholder="${esc(hint)}" aria-label="${esc(hint)}" autocomplete="off">`
+    + `<select class="excel-map-select" aria-label="選擇欄位">${excelSelectHtml(suggestExcelFields('', owners))}</select></div>`;
+}
+
+function excelMappedControl(field, value, rowNumber, col, remappable) {
+  const name = field.group ? `${field.group} · ${field.label}` : field.label;
+  const remap = remappable
+    ? `<button type="button" class="excel-remap" data-excel-remap="1" title="更改對應欄位">對應：${esc(name)}</button>`
+    : '';
+  return `${remap}${excelFillControl(field, value, rowNumber, col)}`;
+}
+
+function excelFillControl(field, value, rowNumber, col) {
+  const common = ` class="excel-fill" data-excel-field="${esc(field.key)}" data-excel-row="${rowNumber}" data-excel-col="${esc(col)}" aria-label="${esc(field.label)}"`;
+  if (field.kind === 'bool') {
+    const on = /^(1|true|yes|on|y|是)$/i.test(String(value || '').trim());
+    return `<label class="excel-fill-bool"><input type="checkbox"${common}${on ? ' checked' : ''}> ${esc(field.label)}</label>`;
+  }
+  if (field.kind === 'choice') {
+    const options = (field.options || []).map((opt) => {
+      const selected = opt.value === value || opt.label === value ? ' selected' : '';
+      return `<option value="${esc(opt.value)}"${selected}>${esc(opt.label)}</option>`;
+    }).join('');
+    return `<select${common}><option value="">${esc(field.label)}</option>${options}</select>`;
+  }
+  return `<input type="text"${common} value="${esc(value || '')}" placeholder="${esc(field.label)}" autocomplete="off">`;
+}
+
 function renderExcelTable(data) {
   const scroll = $('#excelScroll');
   const end = data.rows.length ? data.rows[data.rows.length - 1].n : data.start - 1;
   const notes = [];
   if (data.truncated_rows) notes.push('只顯示前 8000 行');
   if (data.truncated_columns) notes.push('只顯示前 40 欄');
+  const savedMaps = loadExcelMaps();
+  const mapId = (row, col) => excelMapId(data.file, data.sheet, row, col);
+  let fillCount = 0;
+  let pendingCount = 0;
+  data.rows.forEach((row) => data.columns.forEach((col, index) => {
+    let field = row.fields && row.fields[index];
+    if (isUnmappedMark(row.cells && row.cells[index])) field = { kind: 'pick' };
+    if (!field) return;
+    fillCount += 1;
+    const saved = savedMaps[mapId(row.n, col)];
+    if (field.kind === 'pick' && !usableExcelMap(saved)) pendingCount += 1;
+  }));
+  if (fillCount) notes.push(`可填 ${fillCount} 格`);
+  if (pendingCount) notes.push(`${pendingCount} 格未對應`);
   $('#excelMeta').textContent = data.row_count
     ? `${data.sheet}　第 ${data.start}–${end} 行，共 ${data.row_count} 行${notes.length ? `　${notes.join('，')}` : ''}`
     : `${data.sheet}　沒有內容`;
@@ -1938,10 +2212,11 @@ function renderExcelTable(data) {
     const border = row && row.borders && row.borders[colIndex];
     return border && border[side];
   };
-  const head = data.columns.map((col, index) => {
-    const width = (data.widths || [])[index];
-    return `<th${width ? ` style="min-width:${width}px"` : ''}>${esc(col)}</th>`;
-  }).join('');
+  const head = data.columns.map((col) => `<th>${esc(col)}</th>`).join('');
+  const cols = ['<col style="width:42px">'].concat((data.widths || []).map((width) => (
+    `<col style="width:${Math.max(0, width || 0)}px">`
+  ))).join('');
+  const tableWidth = 42 + (data.widths || []).reduce((sum, width) => sum + Math.max(0, width || 0), 0);
   const body = data.rows.map((row) => {
     const cells = data.columns.map((col, index) => {
       const colNumber = index + 1;
@@ -1949,8 +2224,15 @@ function renderExcelTable(data) {
       if (covered.has(key)) return '';
       const span = spanAt.get(key);
       const style = [];
-      const width = (data.widths || [])[index];
-      if (width) style.push(`min-width:${width}px`);
+      const font = row.fonts && row.fonts[index];
+      if (font) {
+        if (font.s) style.push(`font-size:${font.s}pt`);
+        if (font.b) style.push('font-weight:700');
+        if (font.i) style.push('font-style:italic');
+        if (font.f) style.push(`font-family:${esc(`"${font.f}"`)}, Calibri, sans-serif`);
+        if (font.c) style.push(`color:#${font.c}`);
+        if (font.w) style.push('white-space:normal');
+      }
       const fill = row.fills && row.fills[index];
       if (fill) style.push(`background:#${fill}`);
       if (span) {
@@ -1965,13 +2247,32 @@ function renderExcelTable(data) {
         if (border) style.push(border);
       }
       const spanAttr = span ? ` rowspan="${span.rs}" colspan="${span.cs}"` : '';
+      let rawField = row.fields && row.fields[index];
+      let value = row.cells[index] || '';
+      if (isUnmappedMark(value)) {
+        rawField = { key: '', label: '選擇欄位', kind: 'pick', options: [] };
+        value = '';
+      }
+      const saved = rawField && rawField.kind === 'pick' ? savedMaps[mapId(row.n, col)] : null;
+      const field = usableExcelMap(saved) ? saved : rawField;
+      if (field) style.push('background:#f0fdf4');
       const styleAttr = style.length ? ` style="${style.join(';')}"` : '';
-      return `<td data-excel-row="${row.n}" data-excel-col="${esc(col)}"${spanAttr}${styleAttr}>${esc(row.cells[index] || '')}</td>`;
+      const rowOwners = (row.owners && row.owners.length) ? row.owners : ownersFromLabel((row.cells || [])[0]);
+      let content = esc(value);
+      if (field && field.kind === 'pick') content = excelPickControl(rowOwners, value);
+      else if (field) content = excelMappedControl(field, value, row.n, col, Boolean(rawField && rawField.kind === 'pick'));
+      const owners = field ? ` data-excel-owners="${esc(rowOwners.join(','))}" data-excel-value="${esc(value)}"` : '';
+      return `<td class="${field ? 'excel-fill-cell' : ''}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${content}</td>`;
     }).join('');
-    return `<tr><th>${row.n}</th>${cells}</tr>`;
+    const height = row.height || data.default_row_height || 20;
+    return `<tr style="height:${height}px"><th>${row.n}</th>${cells}</tr>`;
   }).join('');
   const gridClass = data.gridlines === false ? 'excel-grid no-gridlines' : 'excel-grid';
-  scroll.innerHTML = `<table class="${gridClass}"><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  const fontSize = data.default_font_size || 11;
+  scroll.innerHTML = `<table class="${gridClass}" style="width:${tableWidth}px;font-size:${fontSize}pt">`
+    + `<colgroup>${cols}</colgroup><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  const firstMap = scroll.querySelector('.excel-map');
+  if (firstMap) firstMap.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 async function loadExcelGrid() {
@@ -2002,13 +2303,66 @@ async function loadExcelGrid() {
 function bindExcelPane() {
   const layout = document.querySelector('.layout');
   const toggle = $('#excelToggle');
+  const popButton = $('#excelPop');
+  const excelParams = new URLSearchParams(location.search);
+  const excelWindow = excelParams.get('view') === 'excel';
+  const savedWidth = Number(localStorage.getItem('cdd-viewer.excel-width'));
+  if (savedWidth >= 280) layout.style.setProperty('--excel-width', `${savedWidth}px`);
+
+  const setExcelWidth = (px) => {
+    const total = layout.getBoundingClientRect().width;
+    const sidebar = document.querySelector('.sidebar').getBoundingClientRect().width;
+    const width = Math.round(Math.min(Math.max(280, total - sidebar - 280), Math.max(280, px)));
+    layout.style.setProperty('--excel-width', `${width}px`);
+    localStorage.setItem('cdd-viewer.excel-width', String(width));
+  };
+  const handle = $('#excelResize');
+  handle.addEventListener('pointerdown', (event) => {
+    if (layout.classList.contains('excel-collapsed')) return;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startWidth = $('#excelPane').getBoundingClientRect().width;
+    document.body.classList.add('excel-resizing');
+    const move = (pointer) => setExcelWidth(startWidth + startX - pointer.clientX);
+    const stop = () => {
+      document.body.classList.remove('excel-resizing');
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', stop);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', stop);
+  });
+  handle.addEventListener('dblclick', () => {
+    layout.style.removeProperty('--excel-width');
+    localStorage.removeItem('cdd-viewer.excel-width');
+  });
+
+  popButton.addEventListener('click', () => {
+    const params = new URLSearchParams({ view: 'excel' });
+    const file = $('#excelFile').value;
+    const sheet = $('#excelSheet').value;
+    if (file) params.set('file', file);
+    if (sheet) params.set('sheet', sheet);
+    const opened = window.open(
+      `/?${params.toString()}`,
+      'cdd-excel-preview',
+      'popup=yes,width=1280,height=860,resizable=yes,scrollbars=yes',
+    );
+    if (!opened) {
+      $('#excelMeta').textContent = '瀏覽器擋住了彈出視窗。請允許這個網站開啟視窗後再按一次。';
+      return;
+    }
+    opened.focus();
+  });
+  if (excelWindow) document.body.classList.add('excel-window');
   const apply = (collapsed) => {
     layout.classList.toggle('excel-collapsed', collapsed);
     toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     toggle.title = collapsed ? '展開 Excel' : '收起 Excel';
     toggle.textContent = collapsed ? 'Excel' : '⟩';
   };
-  apply(localStorage.getItem('cdd-viewer.excel') !== 'open');
+  apply(excelWindow ? false : localStorage.getItem('cdd-viewer.excel') !== 'open');
   toggle.addEventListener('click', () => {
     const collapsed = !layout.classList.contains('excel-collapsed');
     apply(collapsed);
@@ -2032,7 +2386,45 @@ function bindExcelPane() {
     $('#excelPage').textContent = '';
     $('#excelPrev').disabled = true;
     $('#excelNext').disabled = true;
-    $('#excelMeta').textContent = '選擇檔案後按讀取。這不會改資料庫。';
+    $('#excelMeta').textContent = '選擇檔案後按讀取。儲存格寫 [[]] 後，該格會變成可搜尋的下拉選單。這不會改資料庫。';
+  });
+  const scroll = $('#excelScroll');
+  scroll.addEventListener('input', (event) => {
+    const input = event.target.closest('.excel-map-query');
+    if (!input) return;
+    const cell = input.closest('td');
+    const select = cell && cell.querySelector('.excel-map-select');
+    if (!select) return;
+    const owners = (cell.dataset.excelOwners || '').split(',').filter(Boolean);
+    select.innerHTML = excelSelectHtml(suggestExcelFields(input.value, owners));
+  });
+  scroll.addEventListener('change', (event) => {
+    const select = event.target.closest('.excel-map-select');
+    if (!select) return;
+    const option = select.options[select.selectedIndex];
+    if (!option || !option.dataset.mapSpec) return;
+    commitExcelMap(select.closest('td'), JSON.parse(option.dataset.mapSpec));
+  });
+  scroll.addEventListener('keydown', (event) => {
+    const input = event.target.closest('.excel-map-query');
+    if (!input || event.key !== 'Enter') return;
+    event.preventDefault();
+    const option = input.closest('.excel-map')?.querySelector('option[data-map-spec]');
+    if (!option) return;
+    commitExcelMap(input.closest('td'), JSON.parse(option.dataset.mapSpec));
+  });
+  scroll.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-excel-remap]');
+    if (!button) return;
+    const cell = button.closest('td');
+    const maps = loadExcelMaps();
+    delete maps[excelMapId($('#excelFile').value, $('#excelSheet').value, cell.dataset.excelRow, cell.dataset.excelCol)];
+    localStorage.setItem(EXCEL_MAPS_KEY, JSON.stringify(maps));
+    const owners = (cell.dataset.excelOwners || '').split(',').filter(Boolean);
+    cell.innerHTML = excelPickControl(owners, cell.dataset.excelValue || '');
+    const input = cell.querySelector('.excel-map-query');
+    if (input) input.focus();
+    shiftPendingMaps(1);
   });
   $('#excelPrev').addEventListener('click', () => {
     excelView.start = Math.max(1, excelView.start - excelView.limit);
@@ -2057,9 +2449,25 @@ async function init() {
       selectEl.value = defaultFile || files[0].name;
       $('#excelFile').value = selectEl.value;
     }
+    const params = new URLSearchParams(location.search);
+    if (params.get('view') === 'excel') {
+      const wanted = params.get('file');
+      if (wanted && [...$('#excelFile').options].some((option) => option.value === wanted)) {
+        $('#excelFile').value = wanted;
+      }
+      const sheet = params.get('sheet');
+      if (sheet) {
+        $('#excelSheet').innerHTML = `<option value="${esc(sheet)}">${esc(sheet)}</option>`;
+        $('#excelSheet').value = sheet;
+      }
+      if ($('#excelFile').value) {
+        loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
+      }
+    }
   } catch {
     // The company list still comes from MongoDB when the Excel folder cannot be listed.
   }
+  if (new URLSearchParams(location.search).get('view') === 'excel') return;
   try {
     await loadDatabase();
   } catch (err) {
