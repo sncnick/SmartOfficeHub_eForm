@@ -65,8 +65,10 @@ body {
 }
 .source-bar .warn { display: block; margin-top: 3px; color: var(--warn); }
 
-.layout { flex: 1; display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); min-height: 0; }
-.layout.sidebar-collapsed { grid-template-columns: 44px minmax(0, 1fr); }
+.layout { flex: 1; display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr) minmax(300px, 38vw); min-height: 0; }
+.layout.sidebar-collapsed { grid-template-columns: 44px minmax(0, 1fr) minmax(300px, 38vw); }
+.layout.excel-collapsed { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr) 44px; }
+.layout.sidebar-collapsed.excel-collapsed { grid-template-columns: 44px minmax(0, 1fr) 44px; }
 
 .sidebar {
   display: flex;
@@ -94,6 +96,51 @@ body {
 }
 .layout.sidebar-collapsed .sidebar { align-items: center; padding: 12px 8px; }
 .layout.sidebar-collapsed .sidebar > :not(.sidebar-toggle) { display: none; }
+
+.excel-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: #fff;
+}
+.excel-pane h2 { margin: 0; font-size: 15px; }
+.excel-body { display: flex; flex: 1; flex-direction: column; gap: 8px; min-height: 0; }
+.excel-pick { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+.excel-pick select { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; }
+.excel-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.excel-pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.excel-grid {
+  border-collapse: collapse;
+  background: #fff;
+  font-family: Calibri, "Segoe UI", sans-serif;
+  font-size: 12px;
+}
+.excel-grid th, .excel-grid td {
+  height: 22px;
+  padding: 1px 4px;
+  border: 1px solid #c0c0c0;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+.excel-grid td { min-width: 48px; background: #fff; }
+.excel-grid.no-gridlines td { border-color: transparent; }
+.excel-grid thead th { position: sticky; top: 0; z-index: 2; background: #f8fafc; text-align: center; }
+.excel-grid tbody th, .excel-grid thead th:first-child {
+  position: sticky;
+  left: 0;
+  min-width: 42px;
+  background: #f8fafc;
+  text-align: center;
+}
+.excel-grid thead th:first-child { z-index: 3; }
+.layout.excel-collapsed .excel-pane { align-items: center; padding: 12px 8px; }
+.layout.excel-collapsed .excel-body { display: none; }
+.layout.excel-collapsed #excelToggle { writing-mode: vertical-rl; width: 28px; height: auto; padding: 10px 0; }
 .sidebar input[type=search] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; }
 
 .filter-panel {
@@ -422,7 +469,9 @@ details.json pre {
 
 @media (max-width: 1100px) {
   .layout,
-  .layout.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .layout.sidebar-collapsed,
+  .layout.excel-collapsed,
+  .layout.sidebar-collapsed.excel-collapsed { grid-template-columns: minmax(0, 1fr); }
   .sidebar {
     position: fixed;
     z-index: 8;
@@ -433,6 +482,19 @@ details.json pre {
     box-shadow: 8px 0 24px rgba(15, 23, 42, .18);
   }
   .layout.sidebar-collapsed .sidebar {
+    width: 44px;
+    box-shadow: none;
+  }
+  .excel-pane {
+    position: fixed;
+    z-index: 8;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(520px, 92vw);
+    box-shadow: -8px 0 24px rgba(15, 23, 42, .18);
+  }
+  .layout.excel-collapsed .excel-pane {
     width: 44px;
     box-shadow: none;
   }

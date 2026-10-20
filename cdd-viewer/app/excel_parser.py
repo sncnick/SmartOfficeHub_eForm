@@ -23,6 +23,7 @@ from typing import Any
 
 import openpyxl
 from openpyxl.styles.colors import COLOR_INDEX
+from openpyxl.utils import get_column_letter
 
 SCHEMA_VERSION = 1
 DEFAULT_SHEET = "CDD"
@@ -1557,5 +1558,165 @@ def parse_workbook(source: str | Path | bytes | Any, *, sheet: str | None = DEFA
     try:
         ws = _pick_sheet(wb, sheet)
         return _SheetParser(wb, ws, outdated_fills).parse(file_name)
+    finally:
+        wb.close()
+
+
+MAX_PREVIEW_ROWS = 8000
+MAX_PREVIEW_COLS = 40
+
+
+def _preview_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dt.datetime):
+        if value.hour or value.minute or value.second:
+            return value.strftime("%Y-%m-%d %H:%M")
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    return str(value)
+
+
+_BORDER_WIDTH = {
+    "hair": "1px", "thin": "1px", "medium": "2px", "thick": "3px", "double": "3px",
+    "mediumDashed": "2px", "mediumDashDot": "2px", "mediumDashDotDot": "2px", "slantDashDot": "2px",
+}
+_BORDER_LINE = {
+    "dashed": "dashed", "mediumDashed": "dashed", "dashDot": "dashed", "mediumDashDot": "dashed",
+    "dashDotDot": "dotted", "mediumDashDotDot": "dotted", "dotted": "dotted", "hair": "solid",
+    "double": "double", "slantDashDot": "dashed",
+}
+
+
+def _style_color(color, palette: dict[str, str]) -> str | None:
+    if color is None or getattr(color, "type", None) is None:
+        return None
+    if color.type == "rgb" and isinstance(color.rgb, str):
+        value = color.rgb.upper()
+        if value == "00000000":
+            return "000000"
+        if len(value) == 8 and value.startswith("00"):
+            return None
+        return value[-6:]
+    if color.type == "theme" and color.theme is not None and color.theme < len(_THEME_INDEX):
+        base = palette.get(_THEME_INDEX[color.theme])
+        if base:
+            return _apply_tint(base, color.tint) if color.tint else base
+    if color.type == "indexed" and color.indexed is not None and color.indexed < len(COLOR_INDEX):
+        return COLOR_INDEX[color.indexed][-6:]
+    if color.type == "auto":
+        return "000000"
+    return None
+
+
+def _side_css(side, palette: dict[str, str]) -> str | None:
+    if side is None or not side.style or side.style == "none":
+        return None
+    width = _BORDER_WIDTH.get(side.style, "1px")
+    line = _BORDER_LINE.get(side.style, "solid")
+    color = _style_color(side.color, palette) or "000000"
+    return f"{width} {line} #{color}"
+
+
+def _cell_border(cell, palette: dict[str, str]) -> dict | None:
+    border = getattr(cell, "border", None)
+    if border is None:
+        return None
+    sides = {}
+    for key, side in (("t", border.top), ("r", border.right), ("b", border.bottom), ("l", border.left)):
+        css = _side_css(side, palette)
+        if css:
+            sides[key] = css
+    return sides or None
+
+
+def _column_width(ws, index: int) -> int:
+    letter = get_column_letter(index)
+    dimension = ws.column_dimensions.get(letter)
+    width = dimension.width if dimension is not None and dimension.width else None
+    if not width:
+        width = getattr(ws.sheet_format, "defaultColWidth", None) or 8.43
+    return max(48, round(float(width) * 8))
+
+
+def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) -> dict:
+    """Read one worksheet for display, including text, fills and the drawn borders."""
+    if isinstance(source, (bytes, bytearray)):
+        source = BytesIO(source)
+    wb = openpyxl.load_workbook(source, data_only=True)
+    try:
+        names = list(wb.sheetnames)
+        if not names:
+            raise ParseError("這個 Excel 沒有工作表")
+        if sheet and sheet in names:
+            ws = wb[sheet]
+        elif DEFAULT_SHEET in names:
+            ws = wb[DEFAULT_SHEET]
+        else:
+            ws = wb[names[0]]
+        palette = _theme_palette(wb)
+        fills = FillReader(wb)
+        stored: list[dict] = []
+        width = 1
+        last_used = 0
+        truncated_rows = bool(ws.max_row and ws.max_row > MAX_PREVIEW_ROWS)
+        truncated_columns = bool(ws.max_column and ws.max_column > MAX_PREVIEW_COLS)
+        for index, row in enumerate(
+            ws.iter_rows(max_row=MAX_PREVIEW_ROWS, max_col=MAX_PREVIEW_COLS), start=1,
+        ):
+            texts: list[str] = []
+            borders: list[dict | None] = []
+            paints: list[str | None] = []
+            row_used = 0
+            for cell in row:
+                text = _preview_text(cell.value)
+                border = _cell_border(cell, palette)
+                paint = fills(cell)
+                texts.append(text)
+                borders.append(border)
+                paints.append(paint)
+                if text or border or paint:
+                    row_used = cell.column
+            if row_used:
+                last_used = index
+                width = max(width, min(row_used, MAX_PREVIEW_COLS))
+            stored.append({"cells": texts, "borders": borders, "fills": paints})
+        merges = []
+        for merged in ws.merged_cells.ranges:
+            if merged.min_row > MAX_PREVIEW_ROWS or merged.min_col > MAX_PREVIEW_COLS:
+                continue
+            last_row = min(merged.max_row, MAX_PREVIEW_ROWS)
+            last_col = min(merged.max_col, MAX_PREVIEW_COLS)
+            merges.append({
+                "r": merged.min_row,
+                "c": merged.min_col,
+                "rs": last_row - merged.min_row + 1,
+                "cs": last_col - merged.min_col + 1,
+            })
+            last_used = max(last_used, last_row)
+            width = max(width, last_col)
+        stored = stored[:last_used]
+        for item in stored:
+            item["cells"] = (item["cells"] + [""] * width)[:width]
+            item["borders"] = (item["borders"] + [None] * width)[:width]
+            item["fills"] = (item["fills"] + [None] * width)[:width]
+        view = ws.sheet_view
+        gridlines = True if view.showGridLines is None else bool(view.showGridLines)
+        return {
+            "sheet": ws.title,
+            "sheets": names,
+            "columns": [get_column_letter(i) for i in range(1, width + 1)],
+            "widths": [_column_width(ws, i) for i in range(1, width + 1)],
+            "rows": stored,
+            "merges": merges,
+            "gridlines": gridlines,
+            "truncated_rows": truncated_rows,
+            "truncated_columns": truncated_columns,
+        }
     finally:
         wb.close()

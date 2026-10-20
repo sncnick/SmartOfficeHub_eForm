@@ -8,7 +8,7 @@ from openpyxl.styles import PatternFill
 
 from app.excel_parser import (
     color_name, follows_address_fields, id_document_type, is_orange, is_red, parse_date, parse_label,
-    parse_workbook, split_address,
+    parse_workbook, preview_sheet, split_address,
 )
 
 DUMMY = Path(os.environ.get(
@@ -31,6 +31,40 @@ class AddressFieldOrderTests(unittest.TestCase):
         self.assertFalse(follows_address_fields(["", "B", "C", "D"]))
         self.assertFalse(follows_address_fields(["", "", "", "D"]))
         self.assertFalse(follows_address_fields(["", "", "C", "D"]))
+
+
+class PreviewSheetTests(unittest.TestCase):
+    def test_preview_keeps_excel_row_numbers_text_and_borders(self):
+        from openpyxl.styles import Border, PatternFill, Side
+
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet["B1"] = "Name"
+        sheet["B1"].fill = PatternFill("solid", fgColor="FFFF00")
+        sheet["B1"].border = Border(
+            left=Side(style="thin", color="FF000000"),
+            right=Side(style="medium", color="FF000000"),
+            top=Side(style="thin", color="FF000000"),
+            bottom=Side(style="thin", color="FF000000"),
+        )
+        sheet["A3"] = 12
+        sheet["B3"] = "Ada"
+        sheet.merge_cells("A2:B2")
+        buffer = BytesIO()
+        book.save(buffer)
+        preview = preview_sheet(buffer.getvalue(), "CDD")
+        self.assertEqual(preview["sheet"], "CDD")
+        self.assertEqual(preview["columns"][:2], ["A", "B"])
+        self.assertEqual(preview["rows"][0]["cells"][1], "Name")
+        self.assertEqual(preview["rows"][0]["fills"][1], "FFFF00")
+        self.assertEqual(preview["rows"][0]["borders"][1]["l"], "1px solid #000000")
+        self.assertEqual(preview["rows"][0]["borders"][1]["r"], "2px solid #000000")
+        self.assertEqual(preview["rows"][2]["cells"][0], "12")
+        self.assertEqual(preview["rows"][2]["cells"][1], "Ada")
+        self.assertEqual(len(preview["rows"]), 3)
+        self.assertEqual(preview["merges"], [{"r": 2, "c": 1, "rs": 1, "cs": 2}])
+        self.assertTrue(preview["gridlines"])
 
 
 class LabelTests(unittest.TestCase):

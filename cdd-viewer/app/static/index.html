@@ -24,7 +24,7 @@
   </header>
   <div class="source-bar" id="sourceBar"></div>
 
-  <div class="layout">
+  <div class="layout excel-collapsed">
     <aside class="sidebar">
       <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-expanded="true" title="收起側欄">⟨</button>
       <input type="search" id="search" placeholder="搜尋編號、公司名、BR、人名…" autocomplete="off">
@@ -35,6 +35,26 @@
     <main class="main" id="main">
       <div class="placeholder">載入中…</div>
     </main>
+    <aside class="excel-pane" id="excelPane">
+      <button type="button" class="sidebar-toggle" id="excelToggle" aria-expanded="false" title="展開 Excel">Excel</button>
+      <div class="excel-body">
+        <h2>Excel</h2>
+        <label class="excel-pick">檔案
+          <select id="excelFile" aria-label="要閱讀的 Excel"></select>
+        </label>
+        <label class="excel-pick">工作表
+          <select id="excelSheet" aria-label="工作表"></select>
+        </label>
+        <button type="button" class="btn" id="excelRead">讀取</button>
+        <p class="muted small" id="excelMeta">選擇檔案後按讀取。這不會改資料庫。</p>
+        <div class="excel-scroll" id="excelScroll"></div>
+        <div class="excel-pager">
+          <button type="button" class="btn small" id="excelPrev" disabled>上一頁</button>
+          <span id="excelPage"></span>
+          <button type="button" class="btn small" id="excelNext" disabled>下一頁</button>
+        </div>
+      </div>
+    </aside>
   </div>
 
   <div class="overlay hidden" id="issuesOverlay">

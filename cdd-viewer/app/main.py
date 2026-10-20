@@ -19,7 +19,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from starlette.concurrency import run_in_threadpool
 
 from .documents import add_party, add_record, ensure_party_ids, set_outdated, set_value
-from .excel_parser import DEFAULT_SHEET, ParseError, parse_workbook
+from .excel_parser import DEFAULT_SHEET, ParseError, parse_workbook, preview_sheet
 from .store import get_store
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -46,6 +46,7 @@ async def no_cache_pages(request, call_next):
         response.headers["Cache-Control"] = "no-cache"
     return response
 _cache: dict[Path, tuple[float, dict]] = {}
+_grid_cache: dict[tuple[str, str], tuple[float, dict]] = {}
 _uploads: dict[str, dict] = {}
 
 
@@ -266,6 +267,59 @@ def export_db() -> Response:
         media_type="application/json",
         headers={"Content-Disposition": "attachment; filename*=UTF-8''cdd-database.json"},
     )
+
+
+def _cached_preview(path: Path, sheet: str | None) -> dict:
+    mtime = path.stat().st_mtime
+    key = (str(path), sheet or "")
+    with _lock:
+        cached = _grid_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    data = preview_sheet(path, sheet)
+    with _lock:
+        _grid_cache[key] = (mtime, data)
+    return data
+
+
+@app.get("/api/excel/grid")
+def excel_grid(file: str, sheet: str | None = None, start: int = 1, limit: int = 60) -> dict:
+    """One page of a workbook for the side reader. This does not change the database."""
+    path = _resolve(file)
+    limit = max(1, min(int(limit), 200))
+    start = max(1, int(start))
+    try:
+        grid = _cached_preview(path, sheet or None)
+    except ParseError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except READ_ERRORS as exc:
+        log.warning("cannot preview %s: %s", path.name, exc)
+        raise HTTPException(422, "無法讀取這個 Excel 檔") from exc
+    rows = grid["rows"]
+    page = rows[start - 1:start - 1 + limit]
+    end_row = start + len(page) - 1
+    columns = len(grid["columns"])
+    merges = []
+    for merge in grid.get("merges") or []:
+        last_row = merge["r"] + merge["rs"] - 1
+        last_col = merge["c"] + merge["cs"] - 1
+        if last_row < start or merge["r"] > end_row or last_col < 1 or merge["c"] > columns:
+            continue
+        merges.append(merge)
+    return {
+        "file": file,
+        "sheet": grid["sheet"],
+        "sheets": grid["sheets"],
+        "columns": grid["columns"],
+        "widths": grid.get("widths") or [],
+        "gridlines": grid.get("gridlines", True),
+        "merges": merges,
+        "row_count": len(rows),
+        "start": start,
+        "truncated_rows": grid["truncated_rows"],
+        "truncated_columns": grid["truncated_columns"],
+        "rows": [{"n": start + index, **item} for index, item in enumerate(page)],
+    }
 
 
 @app.get("/api/files")

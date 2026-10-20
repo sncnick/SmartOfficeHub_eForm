@@ -1888,13 +1888,175 @@ function bindEvents() {
   });
 }
 
+const excelView = { start: 1, limit: 60, rowCount: 0, loaded: false };
+let fillingSheets = false;
+
+function excelBorderStyle(border) {
+  if (!border) return '';
+  return [['t', 'top'], ['r', 'right'], ['b', 'bottom'], ['l', 'left']].flatMap(([key, side]) => (
+    border[key] ? [`border-${side}:${border[key]}`] : []
+  )).join(';');
+}
+
+function renderExcelTable(data) {
+  const scroll = $('#excelScroll');
+  const end = data.rows.length ? data.rows[data.rows.length - 1].n : data.start - 1;
+  const notes = [];
+  if (data.truncated_rows) notes.push('只顯示前 8000 行');
+  if (data.truncated_columns) notes.push('只顯示前 40 欄');
+  $('#excelMeta').textContent = data.row_count
+    ? `${data.sheet}　第 ${data.start}–${end} 行，共 ${data.row_count} 行${notes.length ? `　${notes.join('，')}` : ''}`
+    : `${data.sheet}　沒有內容`;
+  $('#excelPage').textContent = data.row_count ? `${data.start}–${end}` : '';
+  $('#excelPrev').disabled = data.start <= 1;
+  $('#excelNext').disabled = !data.row_count || end >= data.row_count;
+  if (!data.rows.length) {
+    scroll.innerHTML = '<p class="muted small">這個工作表沒有內容。</p>';
+    return;
+  }
+  const pageStart = data.start || data.rows[0].n;
+  const pageEnd = data.rows[data.rows.length - 1].n;
+  const colCount = data.columns.length;
+  const covered = new Set();
+  const spanAt = new Map();
+  (data.merges || []).forEach((merge) => {
+    const r1 = Math.max(merge.r, pageStart);
+    const r2 = Math.min(merge.r + merge.rs - 1, pageEnd);
+    const c1 = Math.max(merge.c, 1);
+    const c2 = Math.min(merge.c + merge.cs - 1, colCount);
+    if (r1 > r2 || c1 > c2) return;
+    spanAt.set(`${r1}:${c1}`, { rs: r2 - r1 + 1, cs: c2 - c1 + 1 });
+    for (let row = r1; row <= r2; row += 1) {
+      for (let col = c1; col <= c2; col += 1) {
+        if (row !== r1 || col !== c1) covered.add(`${row}:${col}`);
+      }
+    }
+  });
+  const rowByNumber = new Map(data.rows.map((row) => [row.n, row]));
+  const sideOf = (rowNumber, colIndex, side) => {
+    const row = rowByNumber.get(rowNumber);
+    const border = row && row.borders && row.borders[colIndex];
+    return border && border[side];
+  };
+  const head = data.columns.map((col, index) => {
+    const width = (data.widths || [])[index];
+    return `<th${width ? ` style="min-width:${width}px"` : ''}>${esc(col)}</th>`;
+  }).join('');
+  const body = data.rows.map((row) => {
+    const cells = data.columns.map((col, index) => {
+      const colNumber = index + 1;
+      const key = `${row.n}:${colNumber}`;
+      if (covered.has(key)) return '';
+      const span = spanAt.get(key);
+      const style = [];
+      const width = (data.widths || [])[index];
+      if (width) style.push(`min-width:${width}px`);
+      const fill = row.fills && row.fills[index];
+      if (fill) style.push(`background:#${fill}`);
+      if (span) {
+        const top = sideOf(row.n, index, 't');
+        const left = sideOf(row.n, index, 'l');
+        const right = sideOf(row.n, index + span.cs - 1, 'r');
+        const bottom = sideOf(row.n + span.rs - 1, index, 'b');
+        const border = excelBorderStyle({ t: top, r: right, b: bottom, l: left });
+        if (border) style.push(border);
+      } else {
+        const border = excelBorderStyle(row.borders && row.borders[index]);
+        if (border) style.push(border);
+      }
+      const spanAttr = span ? ` rowspan="${span.rs}" colspan="${span.cs}"` : '';
+      const styleAttr = style.length ? ` style="${style.join(';')}"` : '';
+      return `<td data-excel-row="${row.n}" data-excel-col="${esc(col)}"${spanAttr}${styleAttr}>${esc(row.cells[index] || '')}</td>`;
+    }).join('');
+    return `<tr><th>${row.n}</th>${cells}</tr>`;
+  }).join('');
+  const gridClass = data.gridlines === false ? 'excel-grid no-gridlines' : 'excel-grid';
+  scroll.innerHTML = `<table class="${gridClass}"><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+async function loadExcelGrid() {
+  const file = $('#excelFile').value;
+  if (!file) {
+    $('#excelMeta').textContent = '請先選擇 Excel。';
+    return;
+  }
+  $('#excelMeta').textContent = '正在讀取…';
+  const query = new URLSearchParams({
+    file,
+    start: String(excelView.start),
+    limit: String(excelView.limit),
+  });
+  const sheet = $('#excelSheet').value;
+  if (sheet) query.set('sheet', sheet);
+  const data = await api(`/api/excel/grid?${query.toString()}`);
+  excelView.rowCount = data.row_count;
+  excelView.loaded = true;
+  const sheetSelect = $('#excelSheet');
+  fillingSheets = true;
+  sheetSelect.innerHTML = data.sheets.map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join('');
+  sheetSelect.value = data.sheet;
+  fillingSheets = false;
+  renderExcelTable(data);
+}
+
+function bindExcelPane() {
+  const layout = document.querySelector('.layout');
+  const toggle = $('#excelToggle');
+  const apply = (collapsed) => {
+    layout.classList.toggle('excel-collapsed', collapsed);
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    toggle.title = collapsed ? '展開 Excel' : '收起 Excel';
+    toggle.textContent = collapsed ? 'Excel' : '⟩';
+  };
+  apply(localStorage.getItem('cdd-viewer.excel') !== 'open');
+  toggle.addEventListener('click', () => {
+    const collapsed = !layout.classList.contains('excel-collapsed');
+    apply(collapsed);
+    localStorage.setItem('cdd-viewer.excel', collapsed ? 'closed' : 'open');
+  });
+  $('#excelRead').addEventListener('click', () => {
+    excelView.start = 1;
+    loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
+  });
+  $('#excelSheet').addEventListener('change', () => {
+    if (!excelView.loaded || fillingSheets) return;
+    excelView.start = 1;
+    loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
+  });
+  $('#excelFile').addEventListener('change', () => {
+    excelView.loaded = false;
+    excelView.start = 1;
+    excelView.rowCount = 0;
+    $('#excelSheet').innerHTML = '';
+    $('#excelScroll').innerHTML = '';
+    $('#excelPage').textContent = '';
+    $('#excelPrev').disabled = true;
+    $('#excelNext').disabled = true;
+    $('#excelMeta').textContent = '選擇檔案後按讀取。這不會改資料庫。';
+  });
+  $('#excelPrev').addEventListener('click', () => {
+    excelView.start = Math.max(1, excelView.start - excelView.limit);
+    loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
+  });
+  $('#excelNext').addEventListener('click', () => {
+    excelView.start += excelView.limit;
+    loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
+  });
+}
+
 async function init() {
   bindEvents();
+  bindExcelPane();
   try {
     const { files, default: defaultFile } = await api('/api/files');
     const selectEl = $('#fileSelect');
-    selectEl.innerHTML = files.map((f) => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
-    if (files.length) selectEl.value = defaultFile || files[0].name;
+    const options = files.map((f) => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
+    selectEl.innerHTML = options;
+    $('#excelFile').innerHTML = options;
+    if (files.length) {
+      selectEl.value = defaultFile || files[0].name;
+      $('#excelFile').value = selectEl.value;
+    }
   } catch {
     // The company list still comes from MongoDB when the Excel folder cannot be listed.
   }
