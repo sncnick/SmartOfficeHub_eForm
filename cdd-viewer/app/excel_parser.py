@@ -25,7 +25,7 @@ import openpyxl
 from openpyxl.styles.colors import COLOR_INDEX
 from openpyxl.utils import get_column_letter
 
-from .excel_fields import fill_owners, preview_fill
+from .excel_fields import fill_owners, inline_parts, preview_fill
 
 SCHEMA_VERSION = 1
 DEFAULT_SHEET = "CDD"
@@ -1722,6 +1722,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             paints: list[str | None] = []
             marked: list[dict | None] = []
             fonts: list[dict | None] = []
+            pieces: list[list | None] = []
             row_used = 0
             for cell in row:
                 text = _preview_text(cell.value)
@@ -1736,6 +1737,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
                 paints.append(paint)
                 marked.append(spec)
                 fonts.append(font)
+                pieces.append(None if spec else inline_parts(shown))
                 if shown or spec or border or paint or font:
                     row_used = cell.column
             if row_used:
@@ -1747,6 +1749,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
                 "fills": paints,
                 "fields": marked,
                 "fonts": fonts,
+                "parts": pieces,
                 "height": _row_height(ws, index, fonts),
                 "owners": fill_owners(texts[0] if texts else ""),
             })
@@ -1771,6 +1774,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             item["fills"] = (item["fills"] + [None] * width)[:width]
             item["fields"] = (item["fields"] + [None] * width)[:width]
             item["fonts"] = (item["fonts"] + [None] * width)[:width]
+            item["parts"] = (item["parts"] + [None] * width)[:width]
         view = ws.sheet_view
         gridlines = True if view.showGridLines is None else bool(view.showGridLines)
         return {

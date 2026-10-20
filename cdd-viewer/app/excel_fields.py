@@ -207,6 +207,60 @@ def _is_unmapped_mark(text: str) -> bool:
     return bool(_EMPTY_MARK.fullmatch(str(text or "").strip()))
 
 
+_INLINE = re.compile(r"\[\[\s*([^\[\]]*?)\s*\]\]")
+_TICK_TOKEN = re.compile(r"^(?:\.{3,}|…+|⋯+|．{3,})$")
+
+
+def _is_tick_token(token: str) -> bool:
+    """``[[...]]`` or ``[[…]]`` marks a checkbox and is not a field name."""
+    return bool(_TICK_TOKEN.fullmatch(re.sub(r"\s+", "", str(token or ""))))
+
+
+def inline_parts(value_text: str) -> list[dict] | None:
+    """Split a cell that mixes ordinary text with ``[[field]]`` marks.
+
+    A mark that names a field becomes that field. Any other text, including an
+    unrecognised mark, stays in place. A cell that is only one mark is left to
+    ``preview_fill``.
+    """
+    raw = str(value_text or "")
+    if not _INLINE.search(raw):
+        return None
+    stripped = raw.strip()
+    if _is_unmapped_mark(stripped):
+        return None
+    if _BRACKET.fullmatch(stripped) and resolve_fill_token(_candidate(stripped)):
+        return None
+    parts: list[dict] = []
+
+    def add_text(text: str) -> None:
+        if not text:
+            return
+        if parts and list(parts[-1]) == ["text"]:
+            parts[-1]["text"] += text
+        else:
+            parts.append({"text": text})
+
+    position = 0
+    for match in _INLINE.finditer(raw):
+        add_text(raw[position:match.start()])
+        token = match.group(1).strip()
+        if _is_tick_token(token):
+            parts.append({"tick": True})
+            position = match.end()
+            continue
+        spec = resolve_fill_token(token) if token else None
+        if spec is None and token:
+            add_text(match.group(0))
+        elif spec is None:
+            parts.append({"pick": True})
+        else:
+            parts.append({"field": spec})
+        position = match.end()
+    add_text(raw[position:])
+    return parts or None
+
+
 def preview_fill(value_text: str, comment_text: str = "") -> tuple[dict | None, str]:
     """Return ``(field, text to display)``. A bracket mark hides itself."""
     raw = str(value_text or "").strip()

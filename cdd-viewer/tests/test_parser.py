@@ -10,7 +10,7 @@ from app.excel_parser import (
     color_name, follows_address_fields, id_document_type, is_orange, is_red, parse_date, parse_label,
     parse_workbook, preview_sheet, split_address,
 )
-from app.excel_fields import fill_owners, resolve_fill_token, suggest_fields
+from app.excel_fields import fill_owners, inline_parts, resolve_fill_token, suggest_fields
 
 DUMMY = Path(os.environ.get(
     "CDD_TEST_FILE",
@@ -152,6 +152,20 @@ class PreviewSheetTests(unittest.TestCase):
         self.assertEqual(suggest_fields("BR001 地址")[0]["key"], "BR001.address.1")
         self.assertEqual(suggest_fields("", ["RO"])[0]["key"], "RO.address.1")
         self.assertEqual(suggest_fields("company.type")[0]["kind"], "choice")
+
+    def test_inline_mark_keeps_surrounding_text_and_ticks_a_bool(self):
+        parts = inline_parts("無須領牌 [[CS.license]]，見原因")
+        self.assertEqual(parts[0]["text"], "無須領牌 ")
+        self.assertEqual(parts[1]["field"]["key"], "CS.license")
+        self.assertEqual(parts[1]["field"]["kind"], "bool")
+        self.assertEqual(parts[2]["text"], "，見原因")
+        self.assertEqual(inline_parts("名稱 [[company.name_en]] 完")[1]["field"]["key"], "company.name_en")
+        self.assertIsNone(inline_parts("[[DIR1.ubo]]"))
+        self.assertEqual(inline_parts("保留 [[not.a.field]]")[0]["text"], "保留 [[not.a.field]]")
+        ellipsis = inline_parts("[[…]] Formation of a new company 成立新公司")
+        self.assertEqual(ellipsis[0], {"tick": True})
+        self.assertEqual(ellipsis[1]["text"], " Formation of a new company 成立新公司")
+        self.assertEqual(inline_parts("[[...]] yes")[0], {"tick": True})
 
 
 class LabelTests(unittest.TestCase):
