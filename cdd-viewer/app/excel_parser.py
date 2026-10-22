@@ -1645,7 +1645,9 @@ def _column_width(ws, index: int) -> int:
         return 0
     width = dimension.width if dimension is not None and dimension.width else None
     if not width:
-        width = getattr(ws.sheet_format, "defaultColWidth", None) or 8.43
+        width = getattr(ws.sheet_format, "defaultColWidth", None)
+    if not width:
+        width = getattr(ws.sheet_format, "baseColWidth", None) or 8.43
     width = float(width)
     if width < 1:
         return max(2, round(width * 12))
@@ -1828,7 +1830,11 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
         area_max_row = max((area["r2"] for area in areas), default=0)
         area_max_col = max((area["c2"] for area in areas), default=0)
         read_rows = min(MAX_PREVIEW_ROWS, max(ws.max_row or 1, area_max_row))
-        read_cols = min(256, max(MAX_PREVIEW_COLS, area_max_col))
+        # A font on an untouched cell must not widen the sheet to the old 40-column scan.
+        needed = max(ws.max_column or 1, area_max_col)
+        if not areas:
+            needed = min(needed, MAX_PREVIEW_COLS)
+        read_cols = min(256, max(1, needed))
         stored: list[dict] = []
         width = 1
         last_used = 0
@@ -1858,7 +1864,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
                 marked.append(spec)
                 fonts.append(font)
                 pieces.append(None if spec else inline_parts(shown))
-                if shown or spec or border or paint or font:
+                if shown or spec or border or paint:
                     row_used = cell.column
             if row_used:
                 last_used = index
@@ -1887,6 +1893,8 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             })
             last_used = max(last_used, last_row)
             width = max(width, last_col)
+        if area_max_col:
+            width = max(width, min(area_max_col, read_cols))
         keep_rows = last_used
         if area_max_row:
             keep_rows = max(keep_rows, min(area_max_row, len(stored)))

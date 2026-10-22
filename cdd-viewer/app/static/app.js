@@ -2673,6 +2673,7 @@ function renderExcelTable(data) {
       else if (field) content = excelMappedControl(field, value, row.n, col, Boolean(rawField && rawField.kind === 'pick'));
       const marked = Boolean(field || inline || whole || partials.length);
       const owners = ` data-excel-owners="${esc(rowOwners.join(','))}" data-excel-source="${esc(row.cells[index] || '')}" data-excel-value="${esc(value)}"`;
+      if (excelForm) content = `<div class="excel-cell-clip"><span class="excel-cell-text">${content}</span></div>`;
       return `<td class="${marked ? 'excel-fill-cell' : ''}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${content}</td>`;
     }).join('');
     const height = row.height || data.default_row_height || 20;
@@ -2688,65 +2689,64 @@ function renderExcelTable(data) {
   if (excelForm) fitExcelSheet();
 }
 
+function fitParts(bases, target) {
+  const total = bases.reduce((sum, value) => sum + value, 0) || 1;
+  const sized = bases.map((value) => Math.floor((value / total) * target));
+  let extra = target - sized.reduce((sum, value) => sum + value, 0);
+  for (let index = 0; extra > 0 && index < sized.length; index += 1) {
+    sized[index] += 1;
+    extra -= 1;
+  }
+  return sized;
+}
+
 function fitExcelSheet() {
   const page = excelGridData?.page;
   const table = document.querySelector('.excel-grid');
   const frame = document.querySelector('.excel-sheet-frame');
   if (!page || !table || !frame) return;
+  const cols = [...table.querySelectorAll('col')];
+  const rows = [...table.querySelectorAll('tbody tr')];
   if (!table.dataset.baseWidth) {
-    table.dataset.baseWidth = String(table.scrollWidth);
-    table.dataset.baseHeight = String(table.scrollHeight);
-    table.querySelectorAll('col').forEach((col) => { col.dataset.baseWidth = col.style.width; });
-    table.querySelectorAll('tr').forEach((row) => { row.dataset.baseHeight = row.style.height; });
+    cols.forEach((col) => { col.dataset.baseWidth = col.style.width; });
+    rows.forEach((row) => { row.dataset.baseHeight = row.style.height; });
     table.querySelectorAll('td[style*="font-size"]').forEach((cell) => {
-      const size = cell.style.fontSize;
-      if (size) cell.dataset.baseFont = size;
+      if (cell.style.fontSize) cell.dataset.baseFont = cell.style.fontSize;
     });
+    const baseWidth = cols.reduce((sum, col) => sum + (parseFloat(col.dataset.baseWidth) || 0), 0);
+    const baseHeight = rows.reduce((sum, row) => sum + (parseFloat(row.dataset.baseHeight) || 0), 0);
+    table.dataset.baseWidth = String(baseWidth);
+    table.dataset.baseHeight = String(baseHeight);
   }
-  table.querySelectorAll('col').forEach((col) => { col.style.width = col.dataset.baseWidth || ''; });
-  table.querySelectorAll('tr').forEach((row) => { row.style.height = row.dataset.baseHeight || ''; });
-  table.style.width = `${table.dataset.baseWidth}px`;
-  table.style.zoom = '';
-  table.style.transform = '';
-  const baseWidth = Number(table.dataset.baseWidth) || table.scrollWidth;
-  const baseHeight = Number(table.dataset.baseHeight) || table.scrollHeight;
+  const baseWidths = cols.map((col) => parseFloat(col.dataset.baseWidth) || 0);
+  const baseHeights = rows.map((row) => parseFloat(row.dataset.baseHeight) || 0);
+  const baseWidth = Number(table.dataset.baseWidth) || baseWidths.reduce((sum, value) => sum + value, 0) || 1;
+  const baseHeight = Number(table.dataset.baseHeight) || baseHeights.reduce((sum, value) => sum + value, 0) || 1;
   const pageWidth = page.content_width || baseWidth;
   const pageHeight = page.content_height || baseHeight;
-  const excelScale = Math.min(1, (page.scale || 100) / 100);
-  const room = Math.max(48, Math.round(pageHeight * 0.06));
-  const fitWidth = pageWidth;
-  const fitHeight = Math.max(1, pageHeight - room);
-  const fitScale = Math.min(1, fitWidth / baseWidth, fitHeight / baseHeight);
-  const applyScale = (scale) => {
-    const px = (value) => Math.max(1, Math.floor(parseFloat(value) * scale));
-    table.style.width = `${Math.floor(baseWidth * scale)}px`;
-    table.querySelectorAll('col').forEach((col) => {
-      if (col.dataset.baseWidth) col.style.width = `${px(col.dataset.baseWidth)}px`;
-    });
-    table.querySelectorAll('tr').forEach((row) => {
-      if (!row.dataset.baseHeight) return;
-      const height = px(row.dataset.baseHeight);
-      row.style.height = `${height}px`;
-      row.querySelectorAll('td').forEach((cell) => {
-        cell.style.height = `${height}px`;
-        cell.style.maxHeight = `${height}px`;
-        cell.style.overflow = 'hidden';
-      });
-    });
-    const font = excelGridData.default_font_size || 11;
-    table.style.fontSize = `${font * scale}pt`;
-    table.querySelectorAll('td[data-base-font]').forEach((cell) => {
-      cell.style.fontSize = `${parseFloat(cell.dataset.baseFont) * scale}pt`;
-    });
-  };
-  let scale = Math.min(excelScale, fitScale);
-  applyScale(scale);
-  if (table.scrollHeight > fitHeight || table.scrollWidth > fitWidth) {
-    scale *= Math.min(fitWidth / table.scrollWidth, fitHeight / table.scrollHeight);
-    applyScale(scale);
-  }
-  frame.style.width = `${table.scrollWidth}px`;
-  frame.style.height = `${table.scrollHeight}px`;
+  const targetWidth = Math.max(1, Math.round(pageWidth));
+  const targetHeight = Math.max(1, Math.round(pageHeight));
+  const scaleX = targetWidth / baseWidth;
+  const scaleY = targetHeight / baseHeight;
+  const fontScale = Math.min(scaleX, scaleY);
+  fitParts(baseWidths, 10000).forEach((share, index) => {
+    cols[index].style.width = `${share / 100}%`;
+  });
+  fitParts(baseHeights, targetHeight).forEach((height, index) => {
+    rows[index].style.height = `${height}px`;
+  });
+  table.style.width = '100%';
+  table.style.height = `${targetHeight}px`;
+  table.style.zoom = '';
+  table.style.transform = '';
+  const font = excelGridData.default_font_size || 11;
+  const used = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  table.style.fontSize = `${font * used}pt`;
+  table.querySelectorAll('td[data-base-font]').forEach((cell) => {
+    cell.style.fontSize = `${parseFloat(cell.dataset.baseFont) * used}pt`;
+  });
+  frame.style.width = '100%';
+  frame.style.height = `${targetHeight}px`;
   frame.style.overflow = 'hidden';
 }
 

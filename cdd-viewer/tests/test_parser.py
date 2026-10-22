@@ -226,6 +226,17 @@ class PreviewSheetTests(unittest.TestCase):
         self.assertEqual(len(clipped["rows"]), 5)
         self.assertEqual(clipped["rows"][2]["cells"][-1], "far")
 
+    def test_preview_width_follows_used_columns_not_the_scan_cap(self):
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet["A1"] = "only"
+        sheet["G4"] = "edge"
+        buffer = BytesIO()
+        book.save(buffer)
+        grid = preview_sheet(buffer.getvalue(), "CDD")
+        self.assertEqual(grid["columns"], ["A", "B", "C", "D", "E", "F", "G"])
+
 
 class LabelTests(unittest.TestCase):
     def test_role_variants_are_normalised(self):

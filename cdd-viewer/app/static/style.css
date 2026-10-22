@@ -819,6 +819,24 @@ body.excel-form .excel-fill-cell { box-shadow: none; }
 body.excel-form .excel-mark-bar,
 body.excel-form .excel-mark-panel,
 body.excel-form .excel-map-menu { display: none !important; }
+body.excel-form .excel-grid:not(.print-grid) td,
+body.excel-form .excel-grid:not(.print-grid) th { border-width: 0; }
+body.excel-form .excel-grid td { position: relative; padding: 0; }
+body.excel-form .excel-cell-clip {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  padding: 0 2px;
+}
+body.excel-form .excel-cell-text {
+  min-width: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
 body.excel-form .excel-filled { white-space: nowrap; }
 body.excel-form .excel-form-field {
   width: 100%;
@@ -830,34 +848,40 @@ body.excel-form .excel-form-field {
 }
 @media print {
   html, body {
+    display: block !important;
     margin: 0 !important;
     padding: 0 !important;
-    height: auto !important;
+    height: 100% !important;
     min-height: 0 !important;
     overflow: hidden !important;
     background: #fff !important;
   }
-  body.excel-form .excel-sheet-frame { overflow: hidden !important; }
-  body.excel-form .excel-scroll { border: 0 !important; }
+  body.excel-form .excel-sheet-frame,
+  body.excel-form .excel-grid {
+    width: 100% !important;
+    height: 100% !important;
+    overflow: hidden !important;
+  }
   body.excel-form .excel-form-bar,
   body.excel-form .topbar,
   body.excel-form .source-bar,
   body.excel-form .sidebar,
   body.excel-form .main { display: none !important; }
   body.excel-form .excel-grid:not(.print-grid) td,
-  body.excel-form .excel-grid:not(.print-grid) th { border-color: transparent; }
+  body.excel-form .excel-grid:not(.print-grid) th { border-color: transparent; border-width: 0; }
   body.excel-form .excel-grid,
   body.excel-form .excel-grid td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body.excel-form .excel-pane,
   body.excel-form .excel-body,
   body.excel-form .excel-scroll,
   body.excel-form .layout {
+    display: block !important;
     margin: 0 !important;
     padding: 0 !important;
     gap: 0 !important;
     border: 0 !important;
     overflow: hidden !important;
-    height: auto !important;
+    height: 100% !important;
     min-height: 0 !important;
     flex: none !important;
     max-height: none !important;
