@@ -211,8 +211,17 @@ _INLINE = re.compile(r"\[\[\s*([^\[\]]*?)\s*\]\]")
 _TICK_TOKEN = re.compile(r"^(?:\.{2,}|…+|⋯+|．{2,}|。{2,})$")
 # One opening bracket is enough. The whole cluster, including a leftover "]]", is the tick.
 _LOOSE_TICK = re.compile(r"[\[［]{1,2}\s*(?:\.{2,}|…+|⋯+|．{2,}|。{2,})\s*[\]］]{1,3}")
-# ☐ empty, ☑ checked, ☒ crossed. All three are tick boxes; the mark itself is not text.
-_BALLOT = {"\u2610": False, "\u2611": True, "\u2612": True}
+# ☐ and □ are empty boxes. ☑ is checked and ☒ is crossed. The mark itself is not text.
+_BALLOT = {
+    "\u2610": False,
+    "\u25a1": False,
+    "\u25a2": False,
+    "\u25fb": False,
+    "\u25fd": False,
+    "\u2b1c": False,
+    "\u2611": True,
+    "\u2612": True,
+}
 _BALLOT_MARK = re.compile("[" + "".join(_BALLOT) + "]")
 
 

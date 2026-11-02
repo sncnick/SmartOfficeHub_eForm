@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CDD 公司資料檢視</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261102f">
+  <link rel="stylesheet" href="/static/style.css?v=20261103h">
 </head>
 <body>
   <header class="topbar">
@@ -19,6 +19,7 @@
       </label>
       <button type="button" class="btn" id="downloadBtn">下載 JSON</button>
       <button type="button" class="btn" id="issuesBtn">資料問題 <span id="issueCount" class="count"></span></button>
+      <button type="button" class="btn" id="openSettings">設定</button>
       <label class="control"><input type="checkbox" id="expandOutdated"> 展開所有 OUTDATED</label>
     </div>
   </header>
@@ -41,37 +42,40 @@
       <div class="excel-body" id="excelBody">
         <div class="excel-head">
           <h2>Excel</h2>
-          <button type="button" class="btn small" id="excelPop" title="開新視窗">彈出視窗</button>
-          <button type="button" class="btn small" id="excelForm" title="做成可列印表格">表格成品</button>
-        </div>
-        <label class="excel-pick">檔案
-          <select id="excelFile" aria-label="要閱讀的 Excel"></select>
-        </label>
-        <label class="excel-pick">工作表
-          <select id="excelSheet" aria-label="工作表"></select>
-        </label>
-        <button type="button" class="btn" id="excelRead">讀取</button>
-        <button type="button" class="btn" id="excelSplit" title="依列印範圍拆成獨立工作表，再合成一份表格檔">依列印範圍組成表格檔</button>
-        <fieldset class="excel-lm" id="excelLmBox">
-          <legend>LM Studio</legend>
-          <label class="excel-pick">位址
-            <input id="excelLmUrl" type="url" value="http://127.0.0.1:1234/v1" spellcheck="false" aria-label="LM Studio 位址">
-          </label>
-          <label class="excel-pick">模型
-            <select id="excelLmModel" aria-label="LM Studio 模型"></select>
-          </label>
-          <div class="excel-lm-actions">
-            <button type="button" class="btn small" id="excelLmTest">測試連線</button>
-            <button type="button" class="btn" id="excelLm">分析這一頁</button>
+          <div class="excel-head-actions">
+            <button type="button" class="btn small" id="excelLm">分析這一頁</button>
+            <button type="button" class="btn small" id="excelPop" title="開新視窗">彈出視窗</button>
+            <button type="button" class="btn small" id="excelForm" title="做成可列印表格">表格成品</button>
           </div>
-          <p class="muted small" id="excelLmStatus">尚未測試連線。</p>
-        </fieldset>
-        <p class="muted small" id="excelMeta">選擇檔案後按讀取。儲存格寫 [[]] 後，該格會變成可搜尋的下拉選單。這不會改資料庫。</p>
+        </div>
+        <details class="excel-fold" id="excelPickFold">
+          <summary>選表</summary>
+          <div class="excel-fold-body">
+            <label class="excel-pick">檔案
+              <select id="excelFile" aria-label="要閱讀的 Excel"></select>
+            </label>
+            <label class="excel-pick">工作表
+              <select id="excelSheet" aria-label="工作表"></select>
+            </label>
+            <div class="excel-fold-actions">
+              <button type="button" class="btn" id="excelRead">讀取</button>
+              <button type="button" class="btn" id="excelSplit" title="依列印範圍拆成獨立工作表，再合成一份表格檔">依列印範圍組成表格檔</button>
+            </div>
+          </div>
+        </details>
+        <div class="excel-meta-row" id="excelMetaRow">
+          <div class="excel-page-nav">
+            <button type="button" class="btn small" id="excelSheetPrev" disabled>上一頁</button>
+            <button type="button" class="btn small" id="excelFormPageToggle" disabled title="標記這一頁納入表格 PDF">納入</button>
+            <button type="button" class="btn small" id="excelSheetNext" disabled>下一頁</button>
+          </div>
+          <p class="muted small" id="excelMeta">選擇檔案後按讀取。儲存格寫 [[]] 後，該格會變成可搜尋的下拉選單。這不會改資料庫。</p>
+        </div>
         <div class="excel-scroll" id="excelScroll"></div>
         <div class="excel-pager">
-          <button type="button" class="btn small" id="excelPrev" disabled>上一頁</button>
+          <button type="button" class="btn small" id="excelPrev" disabled>上一段</button>
           <span id="excelPage"></span>
-          <button type="button" class="btn small" id="excelNext" disabled>下一頁</button>
+          <button type="button" class="btn small" id="excelNext" disabled>下一段</button>
         </div>
       </div>
     </aside>
@@ -95,7 +99,33 @@
     </div>
   </div>
 
+  <div class="overlay hidden" id="settingsOverlay">
+    <div class="panel settings-panel" role="dialog" aria-labelledby="settingsTitle">
+      <div class="panel-head">
+        <h2 id="settingsTitle">系統設定</h2>
+        <button type="button" class="btn" id="closeSettings">關閉</button>
+      </div>
+      <div class="panel-body">
+        <section class="settings-block">
+          <h3>LM Studio</h3>
+          <div class="settings-fields">
+            <label>位址
+              <input id="excelLmUrl" type="url" value="http://127.0.0.1:1234/v1" spellcheck="false" aria-label="LM Studio 位址">
+            </label>
+            <label>模型
+              <select id="excelLmModel" aria-label="LM Studio 模型"></select>
+            </label>
+            <div class="settings-actions">
+              <button type="button" class="btn small" id="excelLmTest">測試連線</button>
+            </div>
+            <p class="muted small" id="excelLmStatus">尚未測試連線。</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <div class="pie-tip hidden" id="pieTip" role="tooltip"></div>
-  <script src="/static/app.js?v=20261102f"></script>
+  <script src="/static/app.js?v=20261103h"></script>
 </body>
 </html>
