@@ -2420,19 +2420,20 @@ function showExcelMapMenu(input) {
   placeExcelMapMenu(input);
 }
 
-function excelPickControl(owners) {
+function excelPickControl(owners, sample) {
   const ownerName = { company: '公司', RO: '註冊地址', SHARES: '股本' };
-  const names = owners.map((owner) => ownerName[owner] || owner);
-  const hint = names.length ? `搜尋 ${names.join('、')}` : '搜尋欄位';
+  const names = (owners || []).map((owner) => ownerName[owner] || owner);
+  const example = String(sample || '').trim();
+  const hint = example ? `[[]]　${example}` : (names.length ? `搜尋 ${names.join('、')}` : '[[]]　搜尋欄位');
   return `<input type="search" class="excel-map-query" placeholder="${esc(hint)}" aria-label="${esc(hint)}" autocomplete="off">`;
 }
 
 function isTickToken(token) {
-  return /^(?:\.{3,}|…+|⋯+|．{3,})$/.test(String(token || '').replace(/\s+/g, ''));
+  return /^(?:\.{2,}|\u2026+|\u22ef+|\uff0e{2,}|\u3002{2,})$/.test(String(token || '').replace(/\s+/g, ''));
 }
 
-function excelBareTick() {
-  return '<label class="excel-tick"><input type="checkbox" aria-label="勾選"></label>';
+function excelBareTick(checked) {
+  return `<label class="excel-tick"><input type="checkbox" aria-label="勾選"${checked ? ' checked' : ''}></label>`;
 }
 
 function excelTick(field) {
@@ -2453,9 +2454,37 @@ function resolveInlineField(token) {
   return suggestExcelFields(wanted, []).find((item) => item.key.toLowerCase() === wanted) || null;
 }
 
+function splitBallotParts(parts) {
+  const pattern = /[\u2610\u2611\u2612]/g;
+  const split = [];
+  parts.forEach((part) => {
+    if (part.text === undefined) {
+      split.push(part);
+      return;
+    }
+    let cursor = 0;
+    let match = pattern.exec(part.text);
+    while (match) {
+      const before = part.text.slice(cursor, match.index);
+      if (before) split.push({ text: before });
+      split.push({ tick: true, checked: match[0] !== '\u2610' });
+      cursor = match.index + match[0].length;
+      match = pattern.exec(part.text);
+    }
+    const tail = part.text.slice(cursor);
+    if (tail) split.push({ text: tail });
+    pattern.lastIndex = 0;
+  });
+  return split;
+}
+
 function inlinePartsFromText(text) {
-  const raw = String(text || '');
-  if (!/\[\[|［［/.test(raw) || isUnmappedMark(raw)) return null;
+  const source = String(text || '');
+  const raw = source.replace(
+    /[\[［]{1,2}\s*((?:\.{2,}|\u2026+|\u22ef+|\uff0e{2,}|\u3002{2,}))\s*[\]］]{1,3}/g,
+    '[[$1]]',
+  );
+  if (!/\[\[|［［|[\u2610\u2611\u2612]/.test(raw) || isUnmappedMark(raw)) return null;
   const pattern = /\[\[\s*([^\[\]]*?)\s*\]\]/g;
   const parts = [];
   let position = 0;
@@ -2479,21 +2508,27 @@ function inlinePartsFromText(text) {
     position = match.index + match[0].length;
     match = pattern.exec(raw);
   }
-  if (!found) return null;
+  if (!found && !/[\u2610\u2611\u2612]/.test(source)) return null;
   addText(raw.slice(position));
   if (parts.length === 1 && parts[0].field) return null;
-  return parts;
+  const boxed = splitBallotParts(parts.length ? parts : [{ text: source }]);
+  return boxed.length ? boxed : null;
+}
+
+function stripTickMarks(text) {
+  return String(text || '')
+    .replace(/[\[［]{0,2}\s*(?:\.{2,}|\u2026+|\u22ef+|\uff0e{2,}|\u3002{2,})\s*[\]］]{1,3}/g, '')
+    .replace(/[\u2610\u2611\u2612]/g, '');
 }
 
 function excelInlineHtml(parts) {
   if (!parts || !parts.length) return '';
   return `<span class="excel-inline">${parts.map((part) => {
-    if (part.tick) return excelBareTick();
+    if (part.tick) return excelBareTick(part.checked);
     if (part.field && excelForm) return part.field.kind === 'bool' ? excelFormControl(part.field) : `<span class="excel-filled">${esc(companyFieldText(part.field.key))}</span>`;
     if (part.field) return part.field.kind === 'bool' ? excelTick(part.field) : excelInlineValue(part.field);
     if (part.pick) return excelForm ? '' : excelPickControl([]);
-    const text = excelForm ? String(part.text || '').replace(/\[\[[^\]]*\]\]/g, '') : (part.text || '');
-    return esc(text);
+    return esc(stripTickMarks(part.text));
   }).join('')}</span>`;
 }
 
@@ -2512,7 +2547,7 @@ function renderBrowserParts(source, marks) {
   parts.forEach((mark) => {
     const start = Math.max(cursor, mark.start || 0);
     const end = Math.max(start, mark.end || start);
-    html += esc(source.slice(cursor, start));
+    html += esc(stripTickMarks(source.slice(cursor, start)));
     const name = mark.field ? (mark.field.group ? `${mark.field.group} · ${mark.field.label}` : mark.field.label) : '未對應欄位';
     if (excelForm && mark.field && mark.field.kind === 'bool') html += excelFormControl(mark.field);
     else if (excelForm && mark.field) html += `<span class="excel-filled">${esc(companyFieldText(mark.field.key))}</span>`;
@@ -2523,7 +2558,7 @@ function renderBrowserParts(source, marks) {
     }
     cursor = end;
   });
-  html += esc(source.slice(cursor));
+  html += esc(stripTickMarks(source.slice(cursor)));
   return `<span class="excel-inline">${html}</span>`;
 }
 
@@ -2657,16 +2692,23 @@ function renderExcelTable(data) {
       const styleAttr = style.length ? ` style="${style.join(';')}"` : '';
       const rowOwners = (row.owners && row.owners.length) ? row.owners : ownersFromLabel((row.cells || [])[0]);
       const defined = browserMarks(data.file, data.sheet, row.n, col);
-      const whole = defined.find((mark) => mark.scope === 'cell');
-      const partials = defined.filter((mark) => mark.scope === 'part');
-      const inline = excelInlineHtml((row.parts && row.parts[index]) || inlinePartsFromText(value));
+      const locked = defined.some((mark) => mark.scope === 'lock');
+      const whole = locked ? undefined : defined.find((mark) => mark.scope === 'cell');
+      const partials = locked ? [] : defined.filter((mark) => mark.scope === 'part');
+      const parsed = (Array.isArray(row.parts && row.parts[index]) && row.parts[index].length)
+        ? row.parts[index]
+        : inlinePartsFromText(value);
+      const inline = excelInlineHtml(parsed);
+      const hasTick = Boolean(parsed && parsed.some((part) => part.tick));
       const mapped = usableExcelMap(whole?.field) ? whole.field : (field && field.kind !== 'pick' && usableExcelMap(field) ? field : null);
-      let content = esc(value);
-      if (excelForm && partials.length) content = renderBrowserParts(value, partials);
+      let content = locked ? esc(value) : (hasTick ? inline : esc(stripTickMarks(value)));
+      if (locked) content = esc(value);
+      else if (hasTick) content = inline;
+      else if (excelForm && partials.length) content = renderBrowserParts(value, partials);
       else if (excelForm && mapped && mapped.kind === 'bool') content = excelFormControl(mapped);
       else if (excelForm && mapped) content = `<span class="excel-filled">${esc(companyFieldText(mapped.key))}</span>`;
       else if (excelForm && (whole || (field && field.kind === 'pick') || isUnmappedMark(row.cells[index] || ''))) content = '';
-      else if (whole) content = usableExcelMap(whole.field) ? excelMappedControl(whole.field, 'cell') : excelPickControl(rowOwners);
+      else if (whole) content = usableExcelMap(whole.field) ? excelMappedControl(whole.field, 'cell') : excelPickControl(rowOwners, stripTickMarks(value).trim());
       else if (partials.length) content = renderBrowserParts(value, partials);
       else if (inline) content = inline;
       else if (field && field.kind === 'pick') content = excelPickControl(rowOwners, value);
@@ -2811,7 +2853,8 @@ function ensureExcelMarkUi() {
   excelMarkBar.hidden = true;
   excelMarkBar.innerHTML = '<textarea class="excel-mark-text" aria-label="儲存格內容"></textarea>'
     + '<div class="excel-mark-actions"><button type="button" data-mark-cell>整格 [[]]</button>'
-    + '<button type="button" data-mark-part>選取為 [[...]]</button></div>'
+    + '<button type="button" data-mark-part>選取為 [[...]]</button>'
+    + '<button type="button" data-mark-lock>保持原值</button></div>'
     + '<p class="excel-mark-hint"></p>';
   document.body.appendChild(excelMarkBar);
   excelMarkPanel = document.createElement('div');
@@ -2826,6 +2869,19 @@ function ensureExcelMarkUi() {
     if (!cell) return;
     if (event.target.closest('[data-mark-cell]')) defineWholeCell(cell);
     if (event.target.closest('[data-mark-part]')) definePartialCell(cell);
+    if (event.target.closest('[data-mark-lock]')) lockCellValue(cell);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (excelMarkPanel && !excelMarkPanel.hidden) {
+      excelMarkPanel.hidden = true;
+      event.preventDefault();
+      return;
+    }
+    if (excelMarkBar && !excelMarkBar.hidden) {
+      excelMarkBar.hidden = true;
+      event.preventDefault();
+    }
   });
   excelMarkPanel.addEventListener('click', (event) => {
     if (event.target.closest('[data-close-mark]')) excelMarkPanel.hidden = true;
@@ -2840,8 +2896,25 @@ function openCellMarker(td) {
   excelMarkPanel.hidden = true;
   excelMarkBar._cell = td;
   excelMarkBar.querySelector('textarea').value = td.dataset.excelSource || '';
-  excelMarkBar.querySelector('.excel-mark-hint').textContent = '選取一段文字再標為 [[...]]，或把整格標為 [[]]。';
+  const locked = browserMarks(
+    excelGridData?.file || $('#excelFile').value,
+    excelGridData?.sheet || $('#excelSheet').value,
+    td.dataset.excelRow,
+    td.dataset.excelCol,
+  ).some((mark) => mark.scope === 'lock');
+  excelMarkBar.querySelector('[data-mark-lock]').textContent = locked ? '解除鎖定' : '保持原值';
+  excelMarkBar.querySelector('.excel-mark-hint').textContent = '選取一段文字再標為 [[...]]，整格標為 [[]]，或鎖定以保持現在的值。按 Esc 關閉。';
   placeNearCell(excelMarkBar, td);
+}
+
+function lockCellValue(td) {
+  const file = excelGridData?.file || $('#excelFile').value;
+  const sheet = excelGridData?.sheet || $('#excelSheet').value;
+  const marks = browserMarks(file, sheet, td.dataset.excelRow, td.dataset.excelCol);
+  const locked = marks.some((mark) => mark.scope === 'lock');
+  setBrowserMarks(file, sheet, td.dataset.excelRow, td.dataset.excelCol, locked ? [] : [{ scope: 'lock' }]);
+  excelMarkBar.hidden = true;
+  if (excelGridData) renderExcelTable(excelGridData);
 }
 
 function defineWholeCell(td) {
@@ -3062,6 +3135,115 @@ function bindExcelPane() {
   $('#excelRead').addEventListener('click', () => {
     excelView.start = 1;
     loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
+  });
+  $('#excelSplit').addEventListener('click', async () => {
+    const file = $('#excelFile').value;
+    if (!file) {
+      $('#excelMeta').textContent = '請先選擇 Excel。';
+      return;
+    }
+    $('#excelSplit').disabled = true;
+    $('#excelMeta').textContent = '正在依列印範圍拆成獨立工作表…';
+    try {
+      const res = await fetch(`/api/excel/split-pages?file=${encodeURIComponent(file)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || '無法拆分');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const header = res.headers.get('Content-Disposition') || '';
+      const match = /filename\*=UTF-8''([^;]+)/i.exec(header);
+      link.href = url;
+      link.download = match ? decodeURIComponent(match[1]) : 'form.xlsx';
+      link.click();
+      URL.revokeObjectURL(url);
+      $('#excelMeta').textContent = '已下載表格檔。Index 沒有拆。其餘工作表按列印範圍分成 IRF-A-P1 這種頁，再用「讀取」開啟這份檔來填。';
+    } catch (err) {
+      $('#excelMeta').textContent = err.message;
+    } finally {
+      $('#excelSplit').disabled = false;
+    }
+  });
+  const lmKey = 'cdd-viewer.lmstudio';
+  let savedLm = {};
+  try {
+    savedLm = JSON.parse(localStorage.getItem(lmKey) || '{}') || {};
+  } catch (err) {
+    savedLm = {};
+  }
+  if (savedLm.url) $('#excelLmUrl').value = savedLm.url;
+  const lmSettings = () => ({
+    url: $('#excelLmUrl').value.trim() || 'http://127.0.0.1:1234/v1',
+    model: $('#excelLmModel').value || '',
+  });
+  const saveLmSettings = () => {
+    const settings = lmSettings();
+    localStorage.setItem(lmKey, JSON.stringify(settings));
+    return settings;
+  };
+  const fillLmModels = (models, selected) => {
+    const select = $('#excelLmModel');
+    select.innerHTML = (models || []).map((model) => `<option value="${esc(model)}">${esc(model)}</option>`).join('');
+    if (selected && [...select.options].some((option) => option.value === selected)) select.value = selected;
+  };
+  const refreshLm = () => {
+    const settings = saveLmSettings();
+    $('#excelLmStatus').textContent = '正在連線…';
+    const query = new URLSearchParams({ url: settings.url });
+    return api(`/api/lmstudio?${query.toString()}`).then((data) => {
+      fillLmModels(data.models, settings.model);
+      $('#excelLmStatus').textContent = data.ok
+        ? `已連上 ${data.url}，可用模型 ${data.models.length} 個。`
+        : (data.detail || '連不到 LM Studio。');
+      return data;
+    }).catch((err) => {
+      $('#excelLmStatus').textContent = err.message;
+      throw err;
+    });
+  };
+  $('#excelLmTest').addEventListener('click', () => {
+    refreshLm().catch(() => {});
+  });
+  $('#excelLmUrl').addEventListener('change', saveLmSettings);
+  $('#excelLmModel').addEventListener('change', saveLmSettings);
+  refreshLm().catch(() => {});
+  $('#excelLm').addEventListener('click', () => {
+    const file = $('#excelFile').value;
+    const sheet = $('#excelSheet').value || excelGridData?.sheet;
+    const settings = saveLmSettings();
+    if (!file || !excelGridData) {
+      $('#excelMeta').textContent = '請先讀取工作表，再請 LM Studio 分析。';
+      return;
+    }
+    $('#excelLm').disabled = true;
+    $('#excelMeta').textContent = '正在請本機 LM Studio 看這一頁…';
+    api('/api/excel/lmstudio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file, sheet, url: settings.url, model: settings.model }),
+    }).then((data) => {
+      let added = 0;
+      (data.marks || []).forEach((mark) => {
+        if (browserMarks(file, data.sheet, mark.row, mark.col).some((item) => item.scope === 'lock' || item.scope === 'cell' || item.scope === 'part')) return;
+        const stored = mark.kind === 'tick'
+          ? [{ scope: 'part', start: 0, end: 0, excerpt: '', field: null }]
+          : [{ scope: 'cell', field: null }];
+        setBrowserMarks(file, data.sheet, mark.row, mark.col, stored);
+        added += 1;
+      });
+      if (excelGridData) renderExcelTable(excelGridData);
+      const ticks = (data.marks || []).filter((mark) => mark.kind === 'tick').length;
+      const texts = (data.marks || []).filter((mark) => mark.kind === 'text').length;
+      $('#excelMeta').textContent = added
+        ? `已加上 ${ticks} 個勾選框、${texts} 個文字欄 [[]]。這只記在這部電腦，不會改 Excel 檔，也不會寫入公司資料。`
+        : '這一頁沒有新的勾選或空白文字欄需要轉換。';
+    }).catch((err) => {
+      $('#excelMeta').textContent = err.message;
+    }).finally(() => {
+      $('#excelLm').disabled = false;
+    });
   });
   $('#excelSheet').addEventListener('change', () => {
     if (!excelView.loaded || fillingSheets) return;

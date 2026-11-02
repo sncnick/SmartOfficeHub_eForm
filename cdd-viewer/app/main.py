@@ -21,6 +21,8 @@ from starlette.concurrency import run_in_threadpool
 from .documents import add_party, add_record, ensure_party_ids, set_outdated, set_value
 from .excel_fields import suggest_fields
 from .excel_parser import DEFAULT_SHEET, ParseError, clip_to_print_area, parse_workbook, preview_sheet
+from .form_pages import split_workbook_bytes
+from .lmstudio import LmStudioError, analyze_sheet, lmstudio_base, status as lmstudio_status
 from .store import get_store
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -347,6 +349,58 @@ def excel_grid(file: str, sheet: str | None = None, start: int = 1, limit: int =
         "truncated_columns": grid["truncated_columns"],
         "rows": page,
     }
+
+
+@app.get("/api/lmstudio")
+def lmstudio(url: str = "") -> dict:
+    """Report whether the local LM Studio server has a model loaded."""
+    try:
+        return lmstudio_status(url or None)
+    except LmStudioError as exc:
+        tried = ""
+        try:
+            tried = lmstudio_base(url or None)
+        except LmStudioError:
+            tried = url
+        return {"ok": False, "models": [], "url": tried, "detail": str(exc)}
+
+
+@app.post("/api/excel/lmstudio")
+def excel_lmstudio(payload: dict = Body(...)) -> dict:
+    """Classify the current sheet. The file is not changed and company records are not sent."""
+    file_name = str(payload.get("file") or "")
+    sheet = payload.get("sheet") or None
+    path = _resolve(file_name)
+    try:
+        grid = _cached_preview(path, sheet)
+        found = analyze_sheet(grid, payload.get("url") or None, payload.get("model") or None)
+    except LmStudioError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ParseError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except READ_ERRORS as exc:
+        log.warning("cannot analyze workbook: %s", type(exc).__name__)
+        raise HTTPException(422, "無法讀取這個 Excel 檔") from exc
+    return {"file": file_name, "sheet": grid.get("sheet") or "", **found}
+
+
+@app.get("/api/excel/split-pages")
+def excel_split_pages(file: str) -> Response:
+    """Download one workbook whose sheets are the printed pages of ``file``."""
+    path = _resolve(file)
+    try:
+        content = split_workbook_bytes(path)
+    except ParseError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except READ_ERRORS as exc:
+        log.warning("cannot split workbook: %s", type(exc).__name__)
+        raise HTTPException(422, "無法依列印範圍拆分這個 Excel 檔") from exc
+    name = f"{path.stem}_form.xlsx"
+    return Response(
+        content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
+    )
 
 
 @app.get("/api/files")

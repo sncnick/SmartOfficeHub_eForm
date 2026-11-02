@@ -206,10 +206,18 @@ body.excel-resizing { cursor: col-resize; user-select: none; }
   cursor: pointer;
 }
 .excel-live.empty { color: #64748b; }
-.excel-inline { white-space: nowrap; }
+.excel-inline { display: inline-flex; align-items: center; max-width: 100%; white-space: nowrap; }
 .excel-inline .excel-live { display: inline; width: auto; }
-.excel-tick { display: inline-flex; align-items: center; vertical-align: middle; margin: 0 2px; }
-.excel-tick input { width: 14px; height: 14px; margin: 0; accent-color: #059669; }
+.excel-tick { display: inline-flex; flex: none; align-items: center; vertical-align: middle; margin: 0 4px 0 0; }
+.excel-tick input {
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex: none;
+  accent-color: #059669;
+}
 .excel-browser-mark {
   display: inline-flex;
   align-items: center;
@@ -807,7 +815,18 @@ body.excel-form #excelMeta,
 body.excel-form .excel-pager,
 body.excel-form #excelPop,
 body.excel-form #excelForm,
-body.excel-form .excel-head { display: none; }
+body.excel-form .excel-head,
+body.excel-form #excelLmBox,
+body.excel-form #excelSplit { display: none; }
+.excel-lm {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.excel-lm legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
+.excel-lm input { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; }
+.excel-lm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .excel-form-bar {
   display: flex;
   align-items: center;
@@ -821,20 +840,20 @@ body.excel-form .excel-mark-panel,
 body.excel-form .excel-map-menu { display: none !important; }
 body.excel-form .excel-grid:not(.print-grid) td,
 body.excel-form .excel-grid:not(.print-grid) th { border-width: 0; }
-body.excel-form .excel-grid td { position: relative; padding: 0; }
+body.excel-form .excel-grid td { padding: 0; overflow: hidden; }
 body.excel-form .excel-cell-clip {
-  position: absolute;
-  inset: 0;
   box-sizing: border-box;
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  align-items: center;
+  height: 100%;
   overflow: hidden;
   padding: 0 2px;
 }
 body.excel-form .excel-cell-text {
+  display: flex;
+  align-items: center;
   min-width: 0;
-  max-height: 100%;
+  max-width: 100%;
   overflow: hidden;
 }
 body.excel-form .excel-filled { white-space: nowrap; }
@@ -871,6 +890,12 @@ body.excel-form .excel-form-field {
   body.excel-form .excel-grid:not(.print-grid) th { border-color: transparent; border-width: 0; }
   body.excel-form .excel-grid,
   body.excel-form .excel-grid td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body.excel-form .excel-tick input {
+    appearance: auto !important;
+    -webkit-appearance: checkbox !important;
+    width: 14px !important;
+    height: 14px !important;
+  }
   body.excel-form .excel-pane,
   body.excel-form .excel-body,
   body.excel-form .excel-scroll,

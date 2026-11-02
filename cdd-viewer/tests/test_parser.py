@@ -165,7 +165,18 @@ class PreviewSheetTests(unittest.TestCase):
         ellipsis = inline_parts("[[…]] Formation of a new company 成立新公司")
         self.assertEqual(ellipsis[0], {"tick": True})
         self.assertEqual(ellipsis[1]["text"], " Formation of a new company 成立新公司")
+        self.assertNotIn("[", ellipsis[1]["text"])
         self.assertEqual(inline_parts("[[...]] yes")[0], {"tick": True})
+        leftover = inline_parts("[…]] Information verification")
+        self.assertEqual(leftover[0], {"tick": True})
+        self.assertNotIn("[", leftover[1]["text"])
+        self.assertNotIn("]", leftover[1]["text"])
+        empty_box = inline_parts("☐ Formation of a new company")
+        self.assertEqual(empty_box[0], {"tick": True, "checked": False})
+        self.assertNotIn("☐", empty_box[1]["text"])
+        crossed = inline_parts("☒ 已勾選")
+        self.assertEqual(crossed[0], {"tick": True, "checked": True})
+        self.assertNotIn("☒", crossed[1]["text"])
 
     def test_preview_keeps_excel_print_setup(self):
         book = openpyxl.Workbook()

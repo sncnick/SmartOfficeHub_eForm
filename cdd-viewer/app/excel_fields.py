@@ -208,7 +208,12 @@ def _is_unmapped_mark(text: str) -> bool:
 
 
 _INLINE = re.compile(r"\[\[\s*([^\[\]]*?)\s*\]\]")
-_TICK_TOKEN = re.compile(r"^(?:\.{3,}|…+|⋯+|．{3,})$")
+_TICK_TOKEN = re.compile(r"^(?:\.{2,}|…+|⋯+|．{2,}|。{2,})$")
+# One opening bracket is enough. The whole cluster, including a leftover "]]", is the tick.
+_LOOSE_TICK = re.compile(r"[\[［]{1,2}\s*(?:\.{2,}|…+|⋯+|．{2,}|。{2,})\s*[\]］]{1,3}")
+# ☐ empty, ☑ checked, ☒ crossed. All three are tick boxes; the mark itself is not text.
+_BALLOT = {"\u2610": False, "\u2611": True, "\u2612": True}
+_BALLOT_MARK = re.compile("[" + "".join(_BALLOT) + "]")
 
 
 def _is_tick_token(token: str) -> bool:
@@ -224,7 +229,7 @@ def inline_parts(value_text: str) -> list[dict] | None:
     ``preview_fill``.
     """
     raw = str(value_text or "")
-    if not _INLINE.search(raw):
+    if not _INLINE.search(raw) and not _LOOSE_TICK.search(raw) and not _BALLOT_MARK.search(raw):
         return None
     stripped = raw.strip()
     if _is_unmapped_mark(stripped):
@@ -258,7 +263,49 @@ def inline_parts(value_text: str) -> list[dict] | None:
             parts.append({"field": spec})
         position = match.end()
     add_text(raw[position:])
-    return parts or None
+    cleaned: list[dict] = []
+    for part in parts:
+        if "text" not in part:
+            cleaned.append(part)
+            continue
+        cursor = 0
+        for tick in _LOOSE_TICK.finditer(part["text"]):
+            add_piece = part["text"][cursor:tick.start()]
+            if add_piece:
+                if cleaned and list(cleaned[-1]) == ["text"]:
+                    cleaned[-1]["text"] += add_piece
+                else:
+                    cleaned.append({"text": add_piece})
+            cleaned.append({"tick": True})
+            cursor = tick.end()
+        tail = part["text"][cursor:]
+        if tail:
+            if cleaned and list(cleaned[-1]) == ["text"]:
+                cleaned[-1]["text"] += tail
+            else:
+                cleaned.append({"text": tail})
+    with_boxes: list[dict] = []
+    for part in cleaned:
+        if "text" not in part:
+            with_boxes.append(part)
+            continue
+        cursor = 0
+        for box in _BALLOT_MARK.finditer(part["text"]):
+            add_piece = part["text"][cursor:box.start()]
+            if add_piece:
+                if with_boxes and list(with_boxes[-1]) == ["text"]:
+                    with_boxes[-1]["text"] += add_piece
+                else:
+                    with_boxes.append({"text": add_piece})
+            with_boxes.append({"tick": True, "checked": _BALLOT[box.group()]})
+            cursor = box.end()
+        tail = part["text"][cursor:]
+        if tail:
+            if with_boxes and list(with_boxes[-1]) == ["text"]:
+                with_boxes[-1]["text"] += tail
+            else:
+                with_boxes.append({"text": tail})
+    return with_boxes or None
 
 
 def preview_fill(value_text: str, comment_text: str = "") -> tuple[dict | None, str]:

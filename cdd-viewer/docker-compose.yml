@@ -25,6 +25,7 @@ services:
       CDD_OUTDATED_FILLS: "00B0F0"
       CDD_MONGO_URL: mongodb://mongo:27017
       CDD_MONGO_DB: cdd
+      CDD_LMSTUDIO_URL: http://host.docker.internal:1234/v1
     volumes:
       - "${CDD_EXCEL_DIR:-../Database purge}:/data:ro"
       - "./output:/app/output"
