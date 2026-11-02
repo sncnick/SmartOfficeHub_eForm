@@ -185,31 +185,6 @@ body.excel-resizing { cursor: col-resize; user-select: none; }
   white-space: nowrap;
 }
 .excel-grid td { min-width: 0; background: #fff; }
-body:not(.excel-form) .excel-grid,
-body:not(.excel-form) .excel-grid tr,
-body:not(.excel-form) .excel-grid td,
-body:not(.excel-form) .excel-grid td.excel-fill-cell { overflow: visible; }
-body:not(.excel-form) .excel-grid td { position: relative; }
-body:not(.excel-form) .excel-cell-show {
-  position: absolute;
-  left: 2px;
-  top: 0;
-  bottom: 0;
-  z-index: 2;
-  display: flex;
-  align-items: flex-end;
-  width: max-content;
-  max-width: none;
-  background: inherit;
-  white-space: nowrap;
-}
-body:not(.excel-form) .excel-cell-show .excel-live,
-body:not(.excel-form) .excel-cell-show .excel-inline {
-  width: auto;
-  max-width: none;
-  overflow: visible;
-  text-overflow: clip;
-}
 .excel-grid.no-gridlines td { border-color: transparent; }
 .excel-grid thead th { position: sticky; top: 0; z-index: 5; background: #f8fafc; text-align: center; }
 .excel-grid tbody th, .excel-grid thead th:first-child {
@@ -894,27 +869,38 @@ body.excel-form #excelSplit { display: none; }
   margin-bottom: 8px;
 }
 .excel-form-bar button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; }
+.excel-form-bar .excel-page-nav { margin-right: auto; }
 body.excel-form .excel-fill-cell { box-shadow: none; }
 body.excel-form .excel-mark-bar,
 body.excel-form .excel-mark-panel,
 body.excel-form .excel-map-menu { display: none !important; }
 body.excel-form .excel-grid:not(.print-grid) td,
 body.excel-form .excel-grid:not(.print-grid) th { border-width: 0; }
-body.excel-form .excel-grid td { padding: 0; overflow: hidden; }
-body.excel-form .excel-cell-clip {
-  box-sizing: border-box;
+body.excel-form .excel-grid,
+body.excel-form .excel-grid tr,
+body.excel-form .excel-grid td,
+body.excel-form .excel-grid td.excel-fill-cell { overflow: visible; }
+body.excel-form .excel-grid td { position: relative; padding: 0; }
+body.excel-form .excel-cell-show {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
-  height: 100%;
-  overflow: hidden;
-  padding: 0 2px;
+  width: max-content;
+  max-width: none;
+  background: inherit;
+  white-space: nowrap;
 }
-body.excel-form .excel-cell-text {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
+body.excel-form .excel-cell-show .excel-live,
+body.excel-form .excel-cell-show .excel-inline,
+body.excel-form .excel-cell-show .excel-filled {
+  width: auto;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
 }
 body.excel-form .excel-filled { white-space: nowrap; }
 body.excel-form .excel-form-field {
@@ -935,12 +921,17 @@ body.excel-form .excel-form-field {
     overflow: hidden !important;
     background: #fff !important;
   }
-  body.excel-form .excel-sheet-frame,
-  body.excel-form .excel-grid {
+  body.excel-form .excel-sheet-frame {
     width: 100% !important;
     height: 100% !important;
     overflow: hidden !important;
   }
+  body.excel-form .excel-grid {
+    width: 100% !important;
+    height: 100% !important;
+    overflow: visible !important;
+  }
+  body.excel-form .excel-grid td { overflow: visible !important; }
   body.excel-form .excel-form-bar,
   body.excel-form .topbar,
   body.excel-form .source-bar,

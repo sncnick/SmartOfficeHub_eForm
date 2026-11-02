@@ -2982,8 +2982,7 @@ function renderExcelTable(data) {
       else if (field) content = excelMappedControl(field, value, row.n, col, Boolean(rawField && rawField.kind === 'pick'));
       const marked = Boolean(field || inline || whole || partials.length);
       const owners = ` data-excel-owners="${esc(rowOwners.join(','))}" data-excel-source="${esc(row.cells[index] || '')}" data-excel-value="${esc(value)}"`;
-      if (excelForm) content = `<div class="excel-cell-clip"><span class="excel-cell-text">${content}</span></div>`;
-      else content = `<span class="excel-cell-show">${content}</span>`;
+      if (excelForm) content = `<span class="excel-cell-show">${content}</span>`;
       return `<td class="${marked ? 'excel-fill-cell' : ''}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${content}</td>`;
     }).join('');
     const height = row.height || data.default_row_height || 20;
@@ -2996,8 +2995,10 @@ function renderExcelTable(data) {
   const sheet = `<table class="${gridClass}" style="width:${tableWidth}px;font-size:${fontSize}pt">`
     + `<colgroup>${cols}</colgroup>${sheetHead}<tbody>${body}</tbody></table>`;
   scroll.innerHTML = excelForm ? `<div class="excel-sheet-frame">${sheet}</div>` : sheet;
-  if (excelForm) fitExcelSheet();
-  else settleExcelSpill();
+  if (excelForm) {
+    fitExcelSheet();
+    settleExcelSpill();
+  }
 }
 
 function settleExcelSpill() {
@@ -3499,6 +3500,8 @@ function bindExcelPane() {
     const bar = document.createElement('div');
     bar.className = 'excel-form-bar';
     bar.innerHTML = '<button type="button" id="excelPrint">列印表格</button><span>已對應的欄位會自動填上。只有勾選框可以勾選，不能再改對應。</span>';
+    const nav = document.querySelector('.excel-page-nav');
+    if (nav) bar.querySelector('#excelPrint').after(nav);
     $('#excelBody').prepend(bar);
     $('#excelPrint').addEventListener('click', () => window.print());
     window.addEventListener('resize', fitExcelSheet);
