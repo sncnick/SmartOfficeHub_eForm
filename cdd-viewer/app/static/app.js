@@ -3382,13 +3382,16 @@ function wordHitHtml(field) {
     return `<button type="button" class="word-hit enter${cell ? " cell" : ""}" title="Enter" style="left:${field.x}px;top:${field.y}px;width:${side}px;height:${side}px;font-size:${Math.max(12, side - 3)}px" data-word-field="${esc(field.id)}" data-word-param="Enter" aria-label="Enter">${esc(glyph)}</button>`;
   }
   const shown = value ? `<span class="word-hit-value">${esc(value)}</span>` : '';
+  const pdf = wordView.doc?.kind === 'pdf' && value && field.control !== 'checkbox';
   const size = Math.max(12, Math.min(field.h || 14, 18));
   const place = locked
     ? `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`
+    : pdf
+      ? `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`
     : value
       ? `left:${field.x}px;top:${field.y}px;min-width:${field.w || 12}px;min-height:${field.h || 14}px;width:max-content;height:auto;font-size:${size}px;line-height:${size}px`
       : `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`;
-  const mode = locked ? ' original' : `${field.blank ? ' blank' : ''}${value ? ' filled' : ''}`;
+  const mode = locked ? ' original' : `${field.blank ? ' blank' : ''}${value ? ' filled' : ''}${pdf ? ' pdf-fit' : ''}`;
   return `<button type="button" class="word-hit${mode}" title="${esc(value || field.name || '欄位')}" style="${place}" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${shown}</button>`;
 }
 
@@ -3414,6 +3417,40 @@ function renderWordPage(doc, pageNumber) {
   if (pager) pager.hidden = true;
   $('#excelSplit').disabled = true;
   $('#excelLm').disabled = true;
+  requestAnimationFrame(fitPdfFieldText);
+}
+
+function fitPdfFieldText() {
+  document.querySelectorAll('.word-hit.pdf-fit .word-hit-value').forEach((text) => {
+    const node = text.parentElement;
+    if (!node) return;
+    const pad = 4;
+    const boxW = node.clientWidth - pad;
+    const boxH = node.clientHeight;
+    if (boxW < 8 || boxH < 8) return;
+    const max = Math.max(6, Math.min(boxH - 2, 18));
+    const min = 4;
+    const apply = (px) => {
+      text.style.fontSize = `${px}px`;
+      text.style.lineHeight = '1';
+    };
+    apply(max);
+    if (text.scrollWidth <= boxW) return;
+    let low = min;
+    let high = max;
+    let best = min;
+    for (let step = 0; step < 12; step += 1) {
+      const mid = (low + high) / 2;
+      apply(mid);
+      if (text.scrollWidth <= boxW) {
+        best = mid;
+        low = mid;
+      } else {
+        high = mid;
+      }
+    }
+    apply(best);
+  });
 }
 
 function wordFieldCount(block) {
@@ -3593,6 +3630,148 @@ function renderFormPages() {
   button.classList.toggle('on', on);
   button.textContent = on ? '已納入' : '納入';
   button.title = on ? '這一頁會納入表格 PDF，再按一次取消' : '標記這一頁納入表格 PDF';
+}
+
+const MAP_PROFILE_KEY = 'cdd-viewer.mapping-profiles';
+
+function loadMapProfiles() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MAP_PROFILE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((item) => item && item.id && item.name && item.file) : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveMapProfiles(list) {
+  localStorage.setItem(MAP_PROFILE_KEY, JSON.stringify(list));
+}
+
+function fileMappingSlice(store, file) {
+  const prefix = `${file}\t`;
+  const out = {};
+  Object.keys(store || {}).forEach((key) => {
+    if (key.startsWith(prefix)) out[key] = store[key];
+  });
+  return out;
+}
+
+function replaceFileMappings(storageKey, load, file, saved) {
+  const all = load();
+  const prefix = `${file}\t`;
+  Object.keys(all).forEach((key) => {
+    if (key.startsWith(prefix)) delete all[key];
+  });
+  Object.entries(saved || {}).forEach(([key, value]) => {
+    if (key.startsWith(prefix)) all[key] = value;
+  });
+  localStorage.setItem(storageKey, JSON.stringify(all));
+}
+
+function mappingCount(profile) {
+  const stored = ['excelMaps', 'excelMarks', 'wordMaps', 'wordTicks'].reduce(
+    (sum, key) => sum + Object.keys(profile[key] || {}).length,
+    0,
+  );
+  return stored + ((profile.formPages || []).length ? 1 : 0);
+}
+
+function captureMappingProfile(file) {
+  return {
+    excelMaps: fileMappingSlice(loadExcelMaps(), file),
+    excelMarks: fileMappingSlice(loadExcelMarks(), file),
+    wordMaps: fileMappingSlice(loadWordMaps(), file),
+    wordTicks: fileMappingSlice(loadWordTicks(), file),
+    formPages: formPageNames(file),
+  };
+}
+
+function applyMappingProfile(file, profile) {
+  replaceFileMappings(EXCEL_MAPS_KEY, loadExcelMaps, file, profile.excelMaps);
+  replaceFileMappings(EXCEL_MARKS_KEY, loadExcelMarks, file, profile.excelMarks);
+  replaceFileMappings(WORD_MAP_KEY, loadWordMaps, file, profile.wordMaps);
+  replaceFileMappings(WORD_TICK_KEY, loadWordTicks, file, profile.wordTicks);
+  const pages = loadFormPages();
+  pages[file] = Array.isArray(profile.formPages) ? profile.formPages.filter((name) => typeof name === 'string' && name) : [];
+  localStorage.setItem(FORM_PAGES_KEY, JSON.stringify(pages));
+}
+
+function refreshMapProfiles() {
+  const select = document.querySelector('#mapProfilePick');
+  if (!select) return;
+  const file = document.querySelector('#excelFile')?.value || '';
+  const current = select.value;
+  const list = loadMapProfiles().filter((item) => item.file === file);
+  select.innerHTML = '<option value="">叫回做法</option>'
+    + list.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}（${mappingCount(item)}）</option>`).join('');
+  if (list.some((item) => item.id === current)) select.value = current;
+}
+
+function saveCurrentMappingProfile() {
+  const file = document.querySelector('#excelFile')?.value || '';
+  const input = document.querySelector('#mapProfileName');
+  const name = String(input?.value || '').trim().slice(0, 40);
+  if (!file) {
+    $('#excelMeta').textContent = '請先選擇檔案，再儲存對應做法。';
+    return;
+  }
+  if (!name) {
+    $('#excelMeta').textContent = '請先寫做法名稱，再儲存。';
+    input?.focus();
+    return;
+  }
+  const body = captureMappingProfile(file);
+  const count = mappingCount(body);
+  const all = loadMapProfiles();
+  const existing = all.find((item) => item.file === file && item.name === name);
+  const profile = {
+    id: existing?.id || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    name,
+    file,
+    savedAt: new Date().toISOString(),
+    ...body,
+  };
+  saveMapProfiles(existing ? all.map((item) => (item.id === existing.id ? profile : item)) : all.concat(profile));
+  refreshMapProfiles();
+  const select = document.querySelector('#mapProfilePick');
+  if (select) select.value = profile.id;
+  $('#excelMeta').textContent = `${existing ? '已更新' : '已儲存'}做法「${name}」，共 ${count} 項對應。`;
+}
+
+function recallMappingProfile() {
+  const file = document.querySelector('#excelFile')?.value || '';
+  const id = document.querySelector('#mapProfilePick')?.value || '';
+  const profile = loadMapProfiles().find((item) => item.id === id && item.file === file);
+  if (!profile) {
+    $('#excelMeta').textContent = '請先選擇要叫回的做法。';
+    return;
+  }
+  applyMappingProfile(file, profile);
+  const input = document.querySelector('#mapProfileName');
+  if (input) input.value = profile.name;
+  if ((isWordFile(file) || isPdfFile(file)) && wordView.doc && wordView.doc.file === file) {
+    renderWordPage(wordView.doc, wordView.page);
+  } else if (excelGridData && excelGridData.file === file) {
+    renderExcelTable(excelGridData);
+  }
+  renderFormPages();
+  $('#excelMeta').textContent = `已叫回做法「${profile.name}」，共 ${mappingCount(profile)} 項對應。`;
+}
+
+function deleteMappingProfile() {
+  const file = document.querySelector('#excelFile')?.value || '';
+  const id = document.querySelector('#mapProfilePick')?.value || '';
+  const profile = loadMapProfiles().find((item) => item.id === id && item.file === file);
+  if (!profile) {
+    $('#excelMeta').textContent = '請先選擇要刪除的做法。';
+    return;
+  }
+  if (!window.confirm(`刪除做法「${profile.name}」？畫面上的對應不會改變。`)) return;
+  saveMapProfiles(loadMapProfiles().filter((item) => item.id !== id));
+  const input = document.querySelector('#mapProfileName');
+  if (input && input.value === profile.name) input.value = '';
+  refreshMapProfiles();
+  $('#excelMeta').textContent = `已刪除做法「${profile.name}」。畫面上的對應沒有改動。`;
 }
 
 function syncExcelSheetNav() {
@@ -4057,9 +4236,24 @@ function bindExcelPane() {
   });
   $('#excelSheetPrev').addEventListener('click', () => shiftExcelSheet(-1));
   $('#excelSheetNext').addEventListener('click', () => shiftExcelSheet(1));
+  $('#mapProfileSave').addEventListener('click', saveCurrentMappingProfile);
+  $('#mapProfileLoad').addEventListener('click', recallMappingProfile);
+  $('#mapProfileDelete').addEventListener('click', deleteMappingProfile);
+  $('#mapProfilePick').addEventListener('change', () => {
+    const profile = loadMapProfiles().find((item) => item.id === $('#mapProfilePick').value);
+    const input = document.querySelector('#mapProfileName');
+    if (profile && input) input.value = profile.name;
+  });
+  $('#mapProfileName').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveCurrentMappingProfile();
+    }
+  });
   syncExcelPickSummary();
   syncExcelSheetNav();
   renderFormPages();
+  refreshMapProfiles();
   $('#excelRead').addEventListener('click', () => {
     excelView.start = 1;
     loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
@@ -4212,6 +4406,9 @@ function bindExcelPane() {
     $('#excelLm').disabled = kind !== 'excel';
     syncExcelSheetNav();
     renderFormPages();
+    const nameInput = document.querySelector('#mapProfileName');
+    if (nameInput) nameInput.value = '';
+    refreshMapProfiles();
   });
   ensureExcelMarkUi();
   const scroll = $('#excelScroll');

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CDD 公司資料檢視</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261103am">
+  <link rel="stylesheet" href="/static/style.css?v=20261103aq">
 </head>
 <body>
   <header class="topbar">
@@ -43,6 +43,10 @@
         <div class="excel-head">
           <h2>Excel</h2>
           <div class="excel-head-actions">
+            <select id="mapProfilePick" class="excel-head-select" aria-label="已儲存的對應做法" title="叫回已儲存的對應做法">
+              <option value="">叫回做法</option>
+            </select>
+            <button type="button" class="btn small" id="mapProfileLoad">叫回</button>
             <button type="button" class="btn small" id="excelLm">分析這一頁</button>
             <button type="button" class="btn small" id="excelPop" title="開新視窗">彈出視窗</button>
             <button type="button" class="btn small" id="excelForm" title="做成可列印表格">表格成品</button>
@@ -51,15 +55,22 @@
         <details class="excel-fold" id="excelPickFold">
           <summary>選表</summary>
           <div class="excel-fold-body">
-            <label class="excel-pick">檔案
-              <select id="excelFile" aria-label="要閱讀的檔案"></select>
-            </label>
-            <label class="excel-pick">工作表
-              <select id="excelSheet" aria-label="工作表"></select>
-            </label>
+            <div class="excel-pick-row">
+              <label class="excel-pick">檔案
+                <select id="excelFile" aria-label="要閱讀的檔案"></select>
+              </label>
+              <label class="excel-pick">工作表
+                <select id="excelSheet" aria-label="工作表"></select>
+              </label>
+            </div>
             <div class="excel-fold-actions">
               <button type="button" class="btn" id="excelRead">讀取</button>
               <button type="button" class="btn" id="excelSplit" title="依列印範圍拆成獨立工作表，再合成一份表格檔">依列印範圍組成表格檔</button>
+            </div>
+            <div class="excel-fold-actions excel-map-save">
+              <input id="mapProfileName" type="text" maxlength="40" placeholder="做法名稱" autocomplete="off" aria-label="對應做法名稱">
+              <button type="button" class="btn" id="mapProfileSave">儲存</button>
+              <button type="button" class="btn" id="mapProfileDelete" title="刪除已選的做法，不改畫面上的對應">刪除</button>
             </div>
           </div>
         </details>
@@ -126,6 +137,6 @@
   </div>
 
   <div class="pie-tip hidden" id="pieTip" role="tooltip"></div>
-  <script src="/static/app.js?v=20261103am"></script>
+  <script src="/static/app.js?v=20261103aq"></script>
 </body>
 </html>
