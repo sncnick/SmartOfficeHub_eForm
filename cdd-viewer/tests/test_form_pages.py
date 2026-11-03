@@ -79,7 +79,7 @@ class FormPageTests(unittest.TestCase):
         self.assertEqual(output.sheetnames, ["CDD-P1", "CDD-P2"])
         self.assertEqual(output["CDD-P1"]["A1"].value, "上半")
         self.assertEqual(output["CDD-P2"]["A1"].value, "下半")
-        self.assertEqual(output["CDD-P2"]["B1"].value, "")
+        self.assertEqual(output["CDD-P2"]["B1"].value, "下半")
         self.assertEqual(output["CDD-P2"]["C1"].value, "")
         self.assertEqual(output["CDD-P2"]["D1"].value, "=A1+B1")
         self.assertEqual(output["CDD-P2"]["E1"].value, "")
@@ -104,6 +104,23 @@ class FormPageTests(unittest.TestCase):
         self.assertEqual(output["CDD"]["B1"].value, "Hong Kong")
         self.assertEqual(output["CDD"]["B1"].comment.text, "引用：A1")
         self.assertNotEqual(output["CDD"]["B1"].value, "[[]]")
+
+    def test_an_empty_reference_stays_blank_even_when_a_cached_value_exists(self):
+        book = Workbook()
+        form = book.active
+        form.title = "CDD"
+        form["A1"] = None
+        form["B1"] = "=A1"
+        form.print_area = "A1:B2"
+        shown = Workbook()
+        mirror = shown.active
+        mirror.title = "CDD"
+        mirror["B1"] = "舊資料"
+
+        output = split_form_pages(book, shown)
+
+        self.assertEqual(output["CDD"]["B1"].value, "")
+        self.assertEqual(output["CDD"]["B1"].comment.text, "引用：A1")
 
     def test_page_ranges_follow_the_print_area_order(self):
         book = Workbook()

@@ -257,6 +257,34 @@ def _note_reference(cell, label: str) -> None:
     cell.comment = Comment(line, "CDD")
 
 
+def _blank_value(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _formula_text(value) -> bool:
+    return isinstance(value, str) and value.strip().startswith("=")
+
+
+_ABSENT = object()
+
+
+def _referenced_value(source, formula: str):
+    """The cell a reference reads. ``_ABSENT`` when that cell is not in this workbook."""
+    match = _CELL_REF.match(formula.strip())
+    if not match:
+        return _ABSENT
+    quoted, bare, _col_abs, col, _row_abs, row = match.groups()
+    sheet = (quoted or bare or "").replace("''", "'")
+    book = source.parent.parent
+    if sheet:
+        if sheet not in book.sheetnames:
+            return _ABSENT
+        worksheet = book[sheet]
+    else:
+        worksheet = source.parent
+    return worksheet.cell(int(row), column_index_from_string(col)).value
+
+
 def _copy_cell(
     source,
     target,
@@ -271,7 +299,14 @@ def _copy_cell(
     if isinstance(value, str) and _CELL_CALL.match(value.strip()):
         if bounds is not None and shift is not None:
             reference = _reference_label(value, bounds, shift)
-        value = "" if displayed is None or displayed.value is None else displayed.value
+        live = _referenced_value(source, value)
+        if live is _ABSENT:
+            cached = None if displayed is None else displayed.value
+            value = "" if _blank_value(cached) or _formula_text(cached) else cached
+        elif _blank_value(live) or _formula_text(live):
+            value = ""
+        else:
+            value = live
     elif isinstance(value, str) and value.startswith("="):
         origin = source.coordinate if source_at is None else f"{get_column_letter(source_at[1])}{source_at[0]}"
         dest = target.coordinate if target_at is None else f"{get_column_letter(target_at[1])}{target_at[0]}"

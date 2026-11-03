@@ -23,7 +23,7 @@ from typing import Any
 
 import openpyxl
 from openpyxl.styles.colors import COLOR_INDEX
-from openpyxl.utils import get_column_letter, range_boundaries
+from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 
 from .excel_fields import fill_owners, inline_parts, preview_fill
 
@@ -1818,11 +1818,50 @@ def _row_height(ws, index: int, fonts: list[dict | None]) -> int:
     return _points_to_px(points)
 
 
+def _blank_cell(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+_CELL_REF = re.compile(
+    r"""^=\s*(?:(?:\[[^\]]+\])?(?:'((?:[^']|'')+)'|([A-Za-z_][\w.]*))!)?\$?([A-Za-z]{1,3})\$?(\d+)\s*$""",
+    re.IGNORECASE,
+)
+
+
+def _referenced_text(cell) -> str | None:
+    """Text a pure cell reference should show. ``None`` when the cell is not one.
+
+    An empty source stays empty. A saved formula result is not written in its place.
+    """
+    raw = cell.value
+    if not isinstance(raw, str):
+        return None
+    match = _CELL_REF.match(raw.strip())
+    if match is None:
+        return None
+    quoted, bare, col, row = match.groups()
+    sheet = (quoted or bare or "").replace("''", "'")
+    book = cell.parent.parent
+    if sheet:
+        if sheet not in book.sheetnames:
+            return ""
+        worksheet = book[sheet]
+    else:
+        worksheet = cell.parent
+    try:
+        value = worksheet.cell(int(row), column_index_from_string(col)).value
+    except (TypeError, ValueError):
+        return ""
+    if _blank_cell(value) or (isinstance(value, str) and value.strip().startswith("=")):
+        return ""
+    return _preview_text(value)
+
+
 def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) -> dict:
     """Read one worksheet for display, including text, fills and the drawn borders."""
-    if isinstance(source, (bytes, bytearray)):
-        source = BytesIO(source)
-    wb = openpyxl.load_workbook(source, data_only=True)
+    values_source, formula_source = _preview_sources(source)
+    wb = openpyxl.load_workbook(values_source, data_only=True)
+    formulas = openpyxl.load_workbook(formula_source, data_only=False)
     try:
         names = list(wb.sheetnames)
         if not names:
@@ -1833,6 +1872,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             ws = wb[DEFAULT_SHEET]
         else:
             ws = wb[names[0]]
+        formula_ws = formulas[ws.title]
         palette = _theme_palette(wb)
         fills = FillReader(wb)
         areas = _print_area(ws)
@@ -1861,7 +1901,9 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             refs: list[str] = []
             row_used = 0
             for cell in row:
-                text = _preview_text(cell.value)
+                formula_cell = formula_ws.cell(cell.row, cell.column)
+                referenced = _referenced_text(formula_cell)
+                text = referenced if referenced is not None else _preview_text(cell.value)
                 comment = getattr(cell, "comment", None)
                 note = str(getattr(comment, "text", "") or "") if comment is not None else ""
                 refs.append(_cell_reference(note))
@@ -1937,3 +1979,13 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
         }
     finally:
         wb.close()
+        formulas.close()
+
+
+def _preview_sources(source):
+    if isinstance(source, (bytes, bytearray)):
+        return BytesIO(source), BytesIO(source)
+    if hasattr(source, "read"):
+        raw = source.read()
+        return BytesIO(raw), BytesIO(raw)
+    return source, source

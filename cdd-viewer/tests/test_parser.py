@@ -128,6 +128,22 @@ class PreviewSheetTests(unittest.TestCase):
         self.assertEqual(row["fields"][2]["kind"], "pick")
         self.assertEqual(row["fields"][3]["key"], "company.name_en")
 
+    def test_an_empty_cell_reference_stays_blank(self):
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet["A1"] = None
+        sheet["B1"] = "=A1"
+        sheet["C1"] = "Hong Kong"
+        sheet["D1"] = "=C1"
+        buffer = BytesIO()
+        book.save(buffer)
+        preview = preview_sheet(buffer.getvalue(), "CDD")
+        row = preview["rows"][0]
+        self.assertEqual(row["cells"][1], "")
+        self.assertIsNone(row["fields"][1])
+        self.assertEqual(row["cells"][3], "Hong Kong")
+
     def test_fill_tokens_follow_the_form_fields(self):
         self.assertEqual(resolve_fill_token("company.type")["kind"], "choice")
         self.assertEqual(resolve_fill_token("SH1.transfer.from")["key"], "SH1.transfer.from")

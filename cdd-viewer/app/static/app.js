@@ -2302,8 +2302,7 @@ function fieldChecked(key) {
 function refreshExcelLiveValues() {
   document.querySelectorAll('.excel-live[data-excel-field]').forEach((node) => {
     const text = companyFieldText(node.dataset.excelField);
-    const solo = !node.classList.contains('excel-inline-value');
-    node.textContent = text || (solo ? '（沒有資料）' : '');
+    node.textContent = text;
     node.classList.toggle('empty', !text);
   });
   document.querySelectorAll('.excel-tick input[data-excel-field]').forEach((node) => {
@@ -2843,18 +2842,20 @@ function excelMappedFieldsHtml(fields, browserScope) {
     const name = field.group ? `${field.group} · ${field.label}` : field.label;
     if (field.kind === 'bool') return excelTick(field);
     const text = companyFieldText(field.key);
-    return `<span class="excel-live excel-inline-value${text ? '' : ' empty'}" data-excel-field="${esc(field.key)}" title="${esc(name)}">${esc(text || '（沒有資料）')}</span>`;
-  });
+    return text
+      ? `<span class="excel-live excel-inline-value" data-excel-field="${esc(field.key)}" title="${esc(name)}">${esc(text)}</span>`
+      : '';
+  }).filter(Boolean);
   return `<span class="excel-inline excel-multi" data-browser-scope="${esc(browserScope || 'cell')}">${bits.join('<span class="excel-multi-gap">、</span>')}</span>`;
 }
 
 function excelFormFieldsHtml(fields) {
   const list = (fields || []).filter(usableExcelMap);
-  return `<span class="excel-inline excel-multi">${list.map((field) => (
-    field.kind === 'bool'
-      ? excelFormControl(field)
-      : `<span class="excel-filled">${esc(companyFieldText(field.key))}</span>`
-  )).join('<span class="excel-multi-gap">、</span>')}</span>`;
+  return `<span class="excel-inline excel-multi">${list.map((field) => {
+    if (field.kind === 'bool') return excelFormControl(field);
+    const text = companyFieldText(field.key);
+    return text ? `<span class="excel-filled">${esc(text)}</span>` : '';
+  }).filter(Boolean).join('<span class="excel-multi-gap">、</span>')}</span>`;
 }
 
 function excelMappedControl(field, browserScope) {
@@ -2862,8 +2863,7 @@ function excelMappedControl(field, browserScope) {
   const name = field.group ? `${field.group} · ${field.label}` : field.label;
   const text = companyFieldText(field.key);
   const scope = browserScope ? ` data-browser-scope="${esc(browserScope)}"` : ' data-excel-remap="1"';
-  const shown = text || '（沒有資料）';
-  return `<button type="button" class="excel-live excel-live-solo${text ? '' : ' empty'}"${scope} data-excel-field="${esc(field.key)}" title="對應：${esc(name)}　${esc(shown)}">${esc(shown)}</button>`;
+  return `<button type="button" class="excel-live excel-live-solo${text ? '' : ' empty'}"${scope} data-excel-field="${esc(field.key)}" title="對應：${esc(name)}">${esc(text)}</button>`;
 }
 
 function renderBrowserParts(source, marks) {
@@ -3159,6 +3159,16 @@ function isWordFile(name) {
   return /\.docx$/i.test(String(name || ''));
 }
 
+function isPdfFile(name) {
+  return /\.pdf$/i.test(String(name || ''));
+}
+
+function previewKind(name) {
+  if (isWordFile(name)) return 'word';
+  if (isPdfFile(name)) return 'pdf';
+  return 'excel';
+}
+
 function loadWordMaps() {
   try {
     const parsed = JSON.parse(localStorage.getItem(WORD_MAP_KEY) || '{}');
@@ -3363,7 +3373,7 @@ function wordHitHtml(field) {
   if (mapped) {
     value = field.control === 'checkbox'
       ? (fieldChecked(mapped.key) ? '☑' : '☐')
-      : (companyFieldText(mapped.key) || mapped.label || '');
+      : (companyFieldText(mapped.key) || '');
   }
   if (field.enter && !locked && !value) {
     const cell = Boolean(field.cell);
@@ -3391,10 +3401,14 @@ function renderWordPage(doc, pageNumber) {
     return;
   }
   const file = $('#excelFile').value;
-  const src = `/api/word/page?file=${encodeURIComponent(file)}&n=${page.n}&v=${encodeURIComponent(doc.asset || '')}`;
+  const kind = doc.kind === 'pdf' ? 'pdf' : 'word';
+  const src = `/api/${kind}/page?file=${encodeURIComponent(file)}&n=${page.n}&v=${encodeURIComponent(doc.asset || '')}`;
   const hits = (page.fields || []).map(wordHitHtml).join('') + (page.ticks || []).map(wordTickHtml).join('');
   scroll.innerHTML = `<article class="word-doc word-sheet" style="width:${page.width}px;height:${page.height}px"><img alt="" draggable="false" src="${esc(src)}" width="${page.width}" height="${page.height}">${hits}</article>`;
-  $('#excelMeta').textContent = `${file}　第 ${page.n} 頁，共 ${doc.page_count} 頁。表格裡的綠色區域是可輸入文字的位置。`;
+  const note = kind === 'pdf'
+    ? '綠色區域是 PDF 可填欄位，點一下可對應參數。'
+    : '表格裡的綠色區域是可輸入文字的位置。';
+  $('#excelMeta').textContent = `${file}　第 ${page.n} 頁，共 ${doc.page_count} 頁。${note}`;
   $('#excelPage').textContent = '';
   const pager = document.querySelector('.excel-pager');
   if (pager) pager.hidden = true;
@@ -3469,14 +3483,14 @@ function openWordField(node) {
   fillExcelMapMenu(null, searchWordFields(''), node, false);
 }
 
-async function loadWordDocument() {
+async function loadLaidDocument(kind) {
   const file = $('#excelFile').value;
   if (!file) {
-    $('#excelMeta').textContent = '請先選擇 Word。';
+    $('#excelMeta').textContent = kind === 'pdf' ? '請先選擇 PDF。' : '請先選擇 Word。';
     return;
   }
-  $('#excelMeta').textContent = '正在按 Word 版面繪製，請稍候…';
-  const data = await api(`/api/word/preview?file=${encodeURIComponent(file)}`);
+  $('#excelMeta').textContent = kind === 'pdf' ? '正在讀取 PDF…' : '正在按 Word 版面繪製，請稍候…';
+  const data = await api(`/api/${kind}/preview?file=${encodeURIComponent(file)}`);
   wordView.doc = data;
   const pages = data.pages || [];
   const select = $('#excelSheet');
@@ -3493,9 +3507,18 @@ async function loadWordDocument() {
   renderFormPages();
 }
 
+async function loadWordDocument() {
+  return loadLaidDocument('word');
+}
+
+async function loadPdfDocument() {
+  return loadLaidDocument('pdf');
+}
+
 async function loadExcelGrid() {
   const file = $('#excelFile').value;
   if (isWordFile(file)) return loadWordDocument();
+  if (isPdfFile(file)) return loadPdfDocument();
   $('#excelSplit').disabled = false;
   $('#excelLm').disabled = false;
   if (!file) {
@@ -4179,11 +4202,14 @@ function bindExcelPane() {
     $('#excelPage').textContent = '';
     $('#excelPrev').disabled = true;
     $('#excelNext').disabled = true;
-    $('#excelMeta').textContent = isWordFile($('#excelFile').value)
-      ? '這是 Word 表格。按讀取後可點選欄位，對應參數。'
-      : '選擇檔案後按讀取。儲存格寫 [[]] 後，該格會變成可搜尋的下拉選單。這不會改資料庫。';
-    $('#excelSplit').disabled = isWordFile($('#excelFile').value);
-    $('#excelLm').disabled = isWordFile($('#excelFile').value);
+    const kind = previewKind($('#excelFile').value);
+    $('#excelMeta').textContent = kind === 'pdf'
+      ? '這是 PDF。按讀取後可看到版面，並點選可填欄位對應參數。'
+      : kind === 'word'
+        ? '這是 Word 表格。按讀取後可點選欄位，對應參數。'
+        : '選擇檔案後按讀取。儲存格寫 [[]] 後，該格會變成可搜尋的下拉選單。這不會改資料庫。';
+    $('#excelSplit').disabled = kind !== 'excel';
+    $('#excelLm').disabled = kind !== 'excel';
     syncExcelSheetNav();
     renderFormPages();
   });

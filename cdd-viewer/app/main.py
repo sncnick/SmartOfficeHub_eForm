@@ -24,6 +24,7 @@ from .excel_parser import DEFAULT_SHEET, ParseError, clip_to_print_area, parse_w
 from .form_pages import split_workbook_bytes
 from .word_layout import WordLayoutError, blank_gaps, clip_gaps, collect_fields, collect_ticks, layout_docx, page_png, place_fields
 from .word_preview import WordPreviewError, preview_docx
+from .pdf_preview import PdfPreviewError, page_png as pdf_page_png, preview_pdf
 from .lmstudio import LmStudioError, analyze_sheet, lmstudio_base, status as lmstudio_status
 from .store import get_store
 
@@ -36,6 +37,7 @@ SHEET = os.environ.get("CDD_SHEET", DEFAULT_SHEET)
 OUTDATED_FILLS = [c.strip() for c in os.environ.get("CDD_OUTDATED_FILLS", "00B0F0").split(",") if c.strip()]
 EXCEL_SUFFIXES = {".xlsx", ".xlsm"}
 WORD_SUFFIXES = {".docx"}
+PDF_SUFFIXES = {".pdf"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 MAX_UPLOADS_KEPT = 5
 READ_ERRORS = (ParseError, InvalidFileException, BadZipFile, KeyError, ValueError, OSError)
@@ -69,6 +71,10 @@ def _excel_files() -> list[Path]:
 
 def _word_files() -> list[Path]:
     return _listed_files(WORD_SUFFIXES)
+
+
+def _pdf_files() -> list[Path]:
+    return _listed_files(PDF_SUFFIXES)
 
 
 def _resolve(name: str) -> Path:
@@ -487,12 +493,51 @@ def word_page(file: str, n: int = 1) -> Response:
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
+def _resolve_pdf(name: str) -> Path:
+    path = (DATA_DIR / name).resolve()
+    if DATA_DIR not in path.parents or path.suffix.lower() not in PDF_SUFFIXES or not path.is_file():
+        raise HTTPException(404, "找不到這個 PDF 檔")
+    return path
+
+
+@app.get("/api/pdf/preview")
+def pdf_preview(file: str) -> dict:
+    """Preview a PDF, with one field for each box the form lets you fill."""
+    path = _resolve_pdf(file)
+    try:
+        laid = preview_pdf(path)
+    except PdfPreviewError as exc:
+        log.warning("cannot preview pdf: %s", type(exc).__name__)
+        raise HTTPException(422, str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        log.warning("cannot read pdf: %s", type(exc).__name__)
+        raise HTTPException(422, "無法讀取這個 PDF") from exc
+    laid["file"] = file
+    return laid
+
+
+@app.get("/api/pdf/page")
+def pdf_page(file: str, n: int = 1) -> Response:
+    """One PDF page image."""
+    path = _resolve_pdf(file)
+    try:
+        png = pdf_page_png(path, n)
+    except PdfPreviewError as exc:
+        log.warning("cannot draw pdf page: %s", type(exc).__name__)
+        raise HTTPException(422, str(exc)) from exc
+    except OSError as exc:
+        log.warning("cannot read pdf: %s", type(exc).__name__)
+        raise HTTPException(422, "無法讀取這個 PDF") from exc
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
 @app.get("/api/files")
 def list_files() -> dict:
     files = _excel_files()
     words = _word_files()
+    pdfs = _pdf_files()
     names = [str(p.relative_to(DATA_DIR)) for p in files]
-    preview = files + words
+    preview = files + words + pdfs
     default = DEFAULT_FILE if DEFAULT_FILE in names else (names[0] if names else None)
     return {
         "files": [{"name": name, "size": path.stat().st_size} for name, path in zip(names, files)],
