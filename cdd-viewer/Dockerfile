@@ -7,6 +7,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libreoffice-writer \
+        poppler-utils \
+        fontconfig \
+        fonts-noto-cjk \
+        fonts-arphic-uming \
+        fonts-arphic-ukai \
+        fonts-liberation \
+        fonts-crosextra-carlito \
+        fonts-crosextra-caladea \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY fonts/99-cdd-cjk.conf /etc/fonts/conf.d/99-cdd-cjk.conf
+RUN fc-cache -f
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

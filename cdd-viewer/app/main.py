@@ -22,6 +22,8 @@ from .documents import add_party, add_record, ensure_party_ids, set_outdated, se
 from .excel_fields import suggest_fields
 from .excel_parser import DEFAULT_SHEET, ParseError, clip_to_print_area, parse_workbook, preview_sheet
 from .form_pages import split_workbook_bytes
+from .word_layout import WordLayoutError, blank_gaps, clip_gaps, collect_fields, collect_ticks, layout_docx, page_png, place_fields
+from .word_preview import WordPreviewError, preview_docx
 from .lmstudio import LmStudioError, analyze_sheet, lmstudio_base, status as lmstudio_status
 from .store import get_store
 
@@ -33,6 +35,7 @@ DEFAULT_FILE = os.environ.get("CDD_DEFAULT_FILE", "")
 SHEET = os.environ.get("CDD_SHEET", DEFAULT_SHEET)
 OUTDATED_FILLS = [c.strip() for c in os.environ.get("CDD_OUTDATED_FILLS", "00B0F0").split(",") if c.strip()]
 EXCEL_SUFFIXES = {".xlsx", ".xlsm"}
+WORD_SUFFIXES = {".docx"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 MAX_UPLOADS_KEPT = 5
 READ_ERRORS = (ParseError, InvalidFileException, BadZipFile, KeyError, ValueError, OSError)
@@ -53,11 +56,19 @@ _grid_cache: dict[tuple[str, str], tuple[float, dict]] = {}
 _uploads: dict[str, dict] = {}
 
 
-def _excel_files() -> list[Path]:
+def _listed_files(suffixes: set[str]) -> list[Path]:
     if not DATA_DIR.is_dir():
         return []
     return sorted(p for p in DATA_DIR.rglob("*")
-                  if p.is_file() and p.suffix.lower() in EXCEL_SUFFIXES and not p.name.startswith("~$"))
+                  if p.is_file() and p.suffix.lower() in suffixes and not p.name.startswith("~$"))
+
+
+def _excel_files() -> list[Path]:
+    return _listed_files(EXCEL_SUFFIXES)
+
+
+def _word_files() -> list[Path]:
+    return _listed_files(WORD_SUFFIXES)
 
 
 def _resolve(name: str) -> Path:
@@ -403,13 +414,92 @@ def excel_split_pages(file: str) -> Response:
     )
 
 
+def _overlaps(left: dict, right: dict) -> bool:
+    return (
+        left["x"] < right["x"] + right["w"]
+        and right["x"] < left["x"] + left["w"]
+        and left["y"] < right["y"] + right["h"]
+        and right["y"] < left["y"] + left["h"]
+    )
+
+
+def _resolve_word(name: str) -> Path:
+    path = (DATA_DIR / name).resolve()
+    if DATA_DIR not in path.parents or path.suffix.lower() not in WORD_SUFFIXES or not path.is_file():
+        raise HTTPException(404, "找不到這個 Word 檔")
+    return path
+
+
+@app.get("/api/word/preview")
+def word_preview(file: str) -> dict:
+    """Preview a Word form as laid-out pages. Fields keep their parameter name."""
+    path = _resolve_word(file)
+    parsed = {"pages": []}
+    try:
+        parsed = preview_docx(path)
+    except WordPreviewError as exc:
+        log.warning("cannot parse docx fields: %s", type(exc).__name__)
+    except (OSError, ValueError, KeyError) as exc:
+        log.warning("cannot parse docx fields: %s", type(exc).__name__)
+    try:
+        laid = layout_docx(path)
+        pages, unplaced = place_fields(collect_fields(parsed), laid["pages"])
+        gaps = blank_gaps(laid["pages"])
+        enters = {item["n"]: item.get("enters") or [] for item in laid["pages"]}
+        cells = {item["n"]: item.get("cells") or [] for item in laid["pages"]}
+        for page in pages:
+            have = page["fields"]
+            incoming = enters.get(page["n"], [])
+            have.extend(item for item in incoming if item.get("table"))
+            for gap in clip_gaps(gaps.get(page["n"], []), cells.get(page["n"], [])):
+                if not any(_overlaps(gap, item) for item in have):
+                    have.append(gap)
+            have.extend(item for item in incoming if not item.get("table"))
+        ticks = collect_ticks(laid["pages"])
+        for page in pages:
+            page["ticks"] = ticks.get(page["n"], [])
+    except WordLayoutError as exc:
+        log.warning("cannot draw docx: %s", type(exc).__name__)
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "file": file,
+        "kind": "docx",
+        "render": "page",
+        "page_count": len(pages),
+        "pages": pages,
+        "unplaced": unplaced,
+        "asset": laid["asset"],
+    }
+
+
+@app.get("/api/word/page")
+def word_page(file: str, n: int = 1) -> Response:
+    """One finished page image. The picture is the Word layout, not a rebuilt table."""
+    path = _resolve_word(file)
+    try:
+        png = page_png(path, n)
+    except WordLayoutError as exc:
+        log.warning("cannot draw docx page: %s", type(exc).__name__)
+        raise HTTPException(422, "無法按 Word 版面繪製這份文件") from exc
+    except OSError as exc:
+        log.warning("cannot read docx: %s", type(exc).__name__)
+        raise HTTPException(422, "無法讀取這個 Word 檔") from exc
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
 @app.get("/api/files")
 def list_files() -> dict:
     files = _excel_files()
+    words = _word_files()
     names = [str(p.relative_to(DATA_DIR)) for p in files]
+    preview = files + words
     default = DEFAULT_FILE if DEFAULT_FILE in names else (names[0] if names else None)
     return {
         "files": [{"name": name, "size": path.stat().st_size} for name, path in zip(names, files)],
+        "preview_files": [
+            {"name": str(path.relative_to(DATA_DIR)), "size": path.stat().st_size, "kind": path.suffix.lower().lstrip(".")}
+            for path in preview
+        ],
         "default": default,
     }
 

@@ -16,7 +16,8 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.formula.translate import Translator
-from openpyxl.utils import get_column_letter, range_boundaries
+from openpyxl.comments import Comment
+from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 from openpyxl.workbook.workbook import Workbook as WorkbookType
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -24,6 +25,10 @@ _INVALID_NAME = str.maketrans({":": " ", "\\": " ", "/": " ", "?": " ", "*": " "
 # A formula that only reads another cell, such as =C19 or =[1]Index!B15.
 _CELL_CALL = re.compile(
     r"""^=\s*(?:(?:\[[^\]]+\])?(?:'(?:[^']|'')+'|[A-Za-z_][\w.]*)!)?\$?[A-Z]{1,3}\$?\d+\s*$""",
+    re.IGNORECASE,
+)
+_CELL_REF = re.compile(
+    r"""^=\s*(?:(?:\[[^\]]+\])?(?:'((?:[^']|'')+)'|([A-Za-z_][\w.]*))!)?(\$?)([A-Za-z]{1,3})(\$?)(\d+)\s*$""",
     re.IGNORECASE,
 )
 
@@ -40,8 +45,12 @@ def page_ranges(ws: Worksheet) -> list[tuple[int, int, int, int]]:
     return []
 
 
-def split_form_pages(source: WorkbookType) -> Workbook:
-    """Build a new workbook whose sheets are the printed pages of ``source``."""
+def split_form_pages(source: WorkbookType, displayed: WorkbookType | None = None) -> Workbook:
+    """Build a new workbook whose sheets are the printed pages of ``source``.
+
+    ``displayed`` is the same file opened with cached values. A formula that only
+    reads another cell keeps that shown text and records which cell it reads.
+    """
     output = Workbook()
     default = output.active
     created = False
@@ -51,11 +60,12 @@ def split_form_pages(source: WorkbookType) -> Workbook:
         ranges = page_ranges(ws)
         if not ranges:
             continue
+        shown = displayed[ws.title] if displayed is not None and ws.title in displayed.sheetnames else None
         multiple = len(ranges) > 1
         for index, bounds in enumerate(ranges, start=1):
             title = _page_title(ws.title, index, multiple, output.sheetnames)
             sheet = output.create_sheet(title)
-            _copy_page(ws, sheet, bounds)
+            _copy_page(ws, sheet, bounds, shown)
             created = True
     if created and default is not None and default.title == "Sheet" and default.max_row == 1 and default["A1"].value is None:
         output.remove(default)
@@ -64,13 +74,15 @@ def split_form_pages(source: WorkbookType) -> Workbook:
 
 def split_workbook_bytes(path: Path) -> bytes:
     book = load_workbook(path)
+    displayed = load_workbook(path, data_only=True)
     try:
-        output = split_form_pages(book)
+        output = split_form_pages(book, displayed)
         buffer = BytesIO()
         output.save(buffer)
         return buffer.getvalue()
     finally:
         book.close()
+        displayed.close()
 
 
 def _ignored(title: str) -> bool:
@@ -151,7 +163,7 @@ def _title_rows(ws: Worksheet, page: tuple[int, int, int, int]) -> tuple[int, in
     return start, end
 
 
-def _copy_page(ws: Worksheet, target: Worksheet, bounds: tuple[int, int, int, int]) -> None:
+def _copy_page(ws: Worksheet, target: Worksheet, bounds: tuple[int, int, int, int], displayed: Worksheet | None = None) -> None:
     min_col, min_row, max_col, max_row = bounds
     blocks = []
     titles = _title_rows(ws, bounds)
@@ -161,11 +173,11 @@ def _copy_page(ws: Worksheet, target: Worksheet, bounds: tuple[int, int, int, in
         dest_row += titles[1] - titles[0] + 1
     blocks.append((min_col, min_row, max_col, max_row, dest_row, 1))
     for block in blocks:
-        _copy_block(ws, target, block)
+        _copy_block(ws, target, block, displayed)
     _copy_sheet_setup(ws, target, blocks)
 
 
-def _copy_block(ws: Worksheet, target: Worksheet, block: tuple[int, int, int, int, int, int]) -> None:
+def _copy_block(ws: Worksheet, target: Worksheet, block: tuple[int, int, int, int, int, int], displayed: Worksheet | None = None) -> None:
     src_c1, src_r1, src_c2, src_r2, dest_r, dest_c = block
 
     def shift(row: int, col: int) -> tuple[int, int]:
@@ -182,7 +194,13 @@ def _copy_block(ws: Worksheet, target: Worksheet, block: tuple[int, int, int, in
             if isinstance(cell, MergedCell):
                 continue
             new_row, new_col = shift(row, col)
-            _copy_cell(cell, target.cell(new_row, new_col))
+            _copy_cell(
+                cell,
+                target.cell(new_row, new_col),
+                bounds=(src_c1, src_r1, src_c2, src_r2),
+                shift=shift,
+                displayed=displayed.cell(row, col) if displayed is not None else None,
+            )
     for col in range(src_c1, src_c2 + 1):
         letter = get_column_letter(col)
         new_letter = get_column_letter(shift(src_r1, col)[1])
@@ -202,13 +220,58 @@ def _copy_block(ws: Worksheet, target: Worksheet, block: tuple[int, int, int, in
             origin = ws.cell(merged.min_row, merged.min_col)
             corner = target.cell(new_top, new_left)
             if corner.value is None:
-                _copy_cell(origin, corner)
+                _copy_cell(
+                    origin,
+                    corner,
+                    bounds=(src_c1, src_r1, src_c2, src_r2),
+                    shift=shift,
+                    displayed=displayed.cell(origin.row, origin.column) if displayed is not None else None,
+                )
 
 
-def _copy_cell(source, target, source_at: tuple[int, int] | None = None, target_at: tuple[int, int] | None = None) -> None:
+def _reference_label(formula: str, bounds: tuple[int, int, int, int], shift) -> str:
+    """Address a cell-call formula reads, moved when that cell is on this page."""
+    match = _CELL_REF.match(formula.strip())
+    if not match:
+        return formula.lstrip("=").strip()
+    quoted, bare, _col_abs, col, _row_abs, row = match.groups()
+    sheet = (quoted or bare or "").replace("''", "'")
+    col_index = column_index_from_string(col.upper())
+    row_index = int(row)
+    min_col, min_row, max_col, max_row = bounds
+    address = f"{col.upper()}{row_index}"
+    if not sheet and min_col <= col_index <= max_col and min_row <= row_index <= max_row:
+        new_row, new_col = shift(row_index, col_index)
+        return f"{get_column_letter(new_col)}{new_row}"
+    if sheet:
+        shown = f"'{sheet}'" if re.search(r"\s", sheet) else sheet
+        return f"{shown}!{address}"
+    return address
+
+
+def _note_reference(cell, label: str) -> None:
+    line = f"引用：{label}"
+    if cell.comment is not None and str(cell.comment.text or "").strip():
+        cell.comment.text = str(cell.comment.text).rstrip() + "\n" + line
+        return
+    cell.comment = Comment(line, "CDD")
+
+
+def _copy_cell(
+    source,
+    target,
+    source_at: tuple[int, int] | None = None,
+    target_at: tuple[int, int] | None = None,
+    bounds: tuple[int, int, int, int] | None = None,
+    shift=None,
+    displayed=None,
+) -> None:
     value = source.value
+    reference = None
     if isinstance(value, str) and _CELL_CALL.match(value.strip()):
-        value = "[[]]"
+        if bounds is not None and shift is not None:
+            reference = _reference_label(value, bounds, shift)
+        value = "" if displayed is None or displayed.value is None else displayed.value
     elif isinstance(value, str) and value.startswith("="):
         origin = source.coordinate if source_at is None else f"{get_column_letter(source_at[1])}{source_at[0]}"
         dest = target.coordinate if target_at is None else f"{get_column_letter(target_at[1])}{target_at[0]}"
@@ -226,6 +289,8 @@ def _copy_cell(source, target, source_at: tuple[int, int] | None = None, target_
         target.alignment = copy(source.alignment)
     if source.comment is not None:
         target.comment = copy(source.comment)
+    if reference:
+        _note_reference(target, reference)
     if source.hyperlink is not None:
         target.hyperlink = copy(source.hyperlink)
 

@@ -2108,19 +2108,24 @@ function suggestExcelFields(query, owners) {
   });
   const typed = [];
   const words = [];
+  const splitToken = (token) => String(token || '')
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/[._]+/g, ' ')
+    .split(/\s+/)
+    .filter((part) => part.length > 1);
   const pattern = /com\s*sec(?:\s*\d+(?:-\d+(?:\.\d+)?)?)?|公司|註冊地址|股本|\bcompany\b|\bshares\b|br\s*[0-9A-Za-z-]+|(?:dir|dr|sh|cs)\s*\d+(?:-\d+(?:\.\d+)?)?|\bro\b|\b(?:dir|dr|sh|cs)\b/gi;
   let position = 0;
   let found = pattern.exec(text);
   while (found) {
     const gap = text.slice(position, found.index).replace(/^[\s.]+|[\s.]+$/g, '');
-    if (gap) words.push(...gap.split(/\s+/));
+    if (gap) words.push(...splitToken(gap));
     const owner = canonExcelOwner(found[0]);
     if (owner && !typed.includes(owner)) typed.push(owner);
     position = found.index + found[0].length;
     found = pattern.exec(text);
   }
   const tail = text.slice(position).replace(/^[\s.]+|[\s.]+$/g, '');
-  if (tail) words.push(...tail.split(/\s+/).filter(Boolean));
+  if (tail) words.push(...splitToken(tail));
   const targets = typed.length ? typed : hint;
   const poolOwners = words.length ? targets.slice() : (targets.length ? targets : ['company', 'RO', 'SHARES']);
   if (words.length && !typed.length) {
@@ -2137,10 +2142,11 @@ function suggestExcelFields(query, owners) {
       pool.push(spec);
     });
   });
-  const filtered = words.length ? pool.filter((spec) => {
+  const matched = words.length ? pool.filter((spec) => {
     const hay = `${spec.group} ${spec.label} ${spec.key} ${(spec.options || []).map((item) => item.label).join(' ')}`.toLowerCase();
     return words.every((word) => hay.includes(word.toLowerCase()));
   }) : pool;
+  const filtered = matched.length ? matched : pool;
   const ranked = filtered.map((spec, index) => {
     const owner = spec.key.split('.')[0];
     let score = owner && typed.includes(owner) ? 5 : 0;
@@ -2437,6 +2443,9 @@ function closeExcelMapMenu() {
   excelMapMenu._multi = false;
   excelMapMenu._picked = [];
   excelMapMenu._pickedCellId = '';
+  excelMapMenu._wordField = null;
+  excelMapMenu._wordQuery = '';
+  excelMapMenu._wordAnchor = null;
 }
 
 function ensureExcelMapMenu() {
@@ -2453,7 +2462,23 @@ function ensureExcelMapMenu() {
     event.stopPropagation();
     chooseMapButton(button);
   });
+  excelMapMenu.addEventListener('input', (event) => {
+    const input = event.target.closest('.word-map-query');
+    if (!input || !excelMapMenu._wordField) return;
+    excelMapMenu._wordQuery = input.value;
+    excelMapMenu._wordCaret = input.selectionStart;
+    fillExcelMapMenu(null, searchWordFields(input.value), excelMapMenu._wordAnchor, false);
+  });
   excelMapMenu.addEventListener('keydown', (event) => {
+    if (event.target.closest('.word-map-query')) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeExcelMapMenu();
+        return;
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter') onMapMenuKey(event);
+      return;
+    }
     if (event.target.closest('.excel-map-query')) return;
     onMapMenuKey(event);
   });
@@ -2465,8 +2490,29 @@ function mapMenuCell() {
 }
 
 function chooseMapButton(button) {
+  if (!button) return;
+  if (excelMapMenu?._wordField) {
+    const word = excelMapMenu._wordField;
+    if (button.hasAttribute('data-map-lock')) {
+      toggleWordOriginal(word.file, word.id);
+      closeExcelMapMenu();
+      if (wordView.doc) renderWordPage(wordView.doc, wordView.page);
+      return;
+    }
+    if (button.dataset.mapIndex == null) return;
+    const field = excelMapMenu._results[Number(button.dataset.mapIndex)];
+    if (!field) return;
+    saveWordFieldMap(word.file, word.id, field);
+    closeExcelMapMenu();
+    if (wordView.doc) renderWordPage(wordView.doc, wordView.page);
+    return;
+  }
   const cell = mapMenuCell();
-  if (!cell || !button) return;
+  if (!cell) return;
+  if (button.hasAttribute('data-open-ref')) {
+    openReferencedCell(cell);
+    return;
+  }
   if (button.hasAttribute('data-map-lock')) {
     lockCellValue(cell);
     closeExcelMapMenu();
@@ -2549,17 +2595,22 @@ function cellIsLocked(cell) {
 }
 
 function mapActionHtml(cell, includeConvert) {
-  const keep = cellIsLocked(cell) ? '解除鎖定' : '保持原值';
+  const word = excelMapMenu?._wordField;
+  const keep = (cell && cellIsLocked(cell)) || (word && wordFieldLocked(word.file, word.id)) ? '解除鎖定' : '保持原值';
   const convert = includeConvert
     ? '<button type="button" class="excel-map-action" data-map-whole>整格 [[]]</button>'
       + '<button type="button" class="excel-map-action" data-map-tick>變成勾選框</button>'
+    : '';
+  const ref = cell?.dataset.excelRef || '';
+  const refButton = ref
+    ? `<button type="button" class="excel-map-action" data-open-ref>目前引用 ${esc(ref)}</button>`
     : '';
   const multiOn = excelMapMenu?._multi ? ' on' : '';
   const count = (excelMapMenu?._picked || []).length;
   const apply = excelMapMenu?._multi
     ? `<button type="button" class="excel-map-action" data-map-apply${count ? '' : ' disabled'}>套用多選${count ? `（${count}）` : ''}</button>`
     : '';
-  return `<div class="excel-map-actions"><button type="button" class="excel-map-action" data-map-lock>${keep}</button>${convert}`
+  return `<div class="excel-map-actions">${refButton}<button type="button" class="excel-map-action" data-map-lock>${keep}</button>${convert}`
     + `<button type="button" class="excel-map-action${multiOn}" data-map-multi>多選</button>${apply}</div>`;
 }
 
@@ -2589,18 +2640,26 @@ function fillExcelMapMenu(cell, fields, anchor, includeConvert) {
       + `<span class="excel-map-choice-line">${box}<span>${esc(field.group || '')} ${esc(field.label)}</span></span>`
       + `<span class="key">${esc(live || '（沒有資料）')}</span></button>`;
   }).join('');
-  menu.innerHTML = mapActionHtml(cell, includeConvert)
+  const search = menu._wordField
+    ? `<div class="word-map-search"><input type="search" class="word-map-query" placeholder="搜尋參數" value="${esc(menu._wordQuery || '')}" autocomplete="off" aria-label="搜尋參數"></div>`
+    : '';
+  menu.innerHTML = search + mapActionHtml(cell, includeConvert)
     + (options || '<div class="excel-map-empty">沒有相符欄位</div>');
   const buttons = [...menu.querySelectorAll('button')];
   const firstField = buttons.findIndex((button) => button.dataset.mapIndex != null);
   const typed = Boolean((menu._input?.value || '').trim());
   excelMapActive = previousActive != null
     ? Math.max(0, Math.min(previousActive, buttons.length - 1))
-    : (typed && firstField >= 0 ? firstField : 0);
+    : ((typed || menu._wordField) && firstField >= 0 ? firstField : 0);
   buttons.forEach((button, index) => button.classList.toggle('active', index === excelMapActive));
   menu.hidden = false;
   placeExcelMapMenu(anchor || cell);
-  if (!menu._input) menu.focus({ preventScroll: true });
+  const wordQuery = menu.querySelector('.word-map-query');
+  if (wordQuery) {
+    wordQuery.focus({ preventScroll: true });
+    const caret = menu._wordCaret == null ? wordQuery.value.length : menu._wordCaret;
+    wordQuery.setSelectionRange(caret, caret);
+  } else if (!menu._input) menu.focus({ preventScroll: true });
 }
 
 function showExcelMapMenu(input) {
@@ -2689,10 +2748,19 @@ function resolveInlineField(token) {
 }
 
 const CHECKED_BOXES = new Set(['\u2611', '\u2612']);
-const BOX_PATTERN = /[\u2610\u2611\u2612\u25a1\u25a2\u25fb\u25fd\u2b1c]/;
+const BOX_PATTERN = /[\u2610\u2611\u2612\u25a1\u25a2\u25fb\u25fd\u2b1c口]/;
+
+function isCjkChar(char) {
+  const code = char.charCodeAt(0);
+  return code >= 0x3400 && code <= 0x9fff;
+}
+
+function isBoxChar(char, previous) {
+  if (char === '口') return !(previous && isCjkChar(previous));
+  return BOX_PATTERN.test(char) && char !== '口';
+}
 
 function splitBallotParts(parts) {
-  const pattern = new RegExp(BOX_PATTERN.source, 'g');
   const split = [];
   parts.forEach((part) => {
     if (part.text === undefined) {
@@ -2700,17 +2768,16 @@ function splitBallotParts(parts) {
       return;
     }
     let cursor = 0;
-    let match = pattern.exec(part.text);
-    while (match) {
-      const before = part.text.slice(cursor, match.index);
+    [...part.text].forEach((char, index) => {
+      const previous = index ? part.text[index - 1] : '';
+      if (!isBoxChar(char, previous)) return;
+      const before = part.text.slice(cursor, index);
       if (before) split.push({ text: before });
-      split.push({ tick: true, checked: CHECKED_BOXES.has(match[0]) });
-      cursor = match.index + match[0].length;
-      match = pattern.exec(part.text);
-    }
+      split.push({ tick: true, checked: CHECKED_BOXES.has(char) });
+      cursor = index + 1;
+    });
     const tail = part.text.slice(cursor);
     if (tail) split.push({ text: tail });
-    pattern.lastIndex = 0;
   });
   return split;
 }
@@ -2914,6 +2981,15 @@ function renderExcelTable(data) {
     `<col style="width:${shownWidth(width)}px">`
   ))).join('');
   const tableWidth = (excelForm ? 0 : 42) + (data.widths || []).reduce((sum, width) => sum + shownWidth(width), 0);
+  const referencedHere = new Set();
+  if (!excelForm) {
+    data.rows.forEach((row) => {
+      (row.refs || []).forEach((item) => {
+        const match = String(item || '').match(/^([A-Za-z]{1,3})(\d+)$/);
+        if (match) referencedHere.add(`${match[1].toUpperCase()}${match[2]}`);
+      });
+    });
+  }
   const body = data.rows.map((row) => {
     const cells = data.columns.map((col, index) => {
       const colNumber = index + 1;
@@ -2953,6 +3029,9 @@ function renderExcelTable(data) {
       const saved = rawField && rawField.kind === 'pick' ? savedMaps[mapId(row.n, col)] : null;
       const field = usableExcelMap(saved) ? saved : rawField;
       if (field && !excelForm) style.push('background:#f0fdf4');
+      const ref = (row.refs && row.refs[index]) || '';
+      const pointed = !excelForm && referencedHere.has(`${col}${row.n}`);
+      if (!excelForm && (ref || pointed)) style.push('background:#bbf7d0');
       const styleAttr = style.length ? ` style="${style.join(';')}"` : '';
       const rowOwners = (row.owners && row.owners.length) ? row.owners : ownersFromLabel((row.cells || [])[0]);
       const defined = browserMarks(data.file, data.sheet, row.n, col);
@@ -2981,9 +3060,10 @@ function renderExcelTable(data) {
       else if (field && field.kind === 'pick') content = excelPickControl(rowOwners, value);
       else if (field) content = excelMappedControl(field, value, row.n, col, Boolean(rawField && rawField.kind === 'pick'));
       const marked = Boolean(field || inline || whole || partials.length);
-      const owners = ` data-excel-owners="${esc(rowOwners.join(','))}" data-excel-source="${esc(row.cells[index] || '')}" data-excel-value="${esc(value)}"`;
+      const owners = ` data-excel-owners="${esc(rowOwners.join(','))}" data-excel-source="${esc(row.cells[index] || '')}" data-excel-value="${esc(value)}"${ref ? ` data-excel-ref="${esc(ref)}"` : ''}`;
       if (excelForm) content = `<span class="excel-cell-show">${content}</span>`;
-      return `<td class="${marked ? 'excel-fill-cell' : ''}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${content}</td>`;
+      const refClass = pointed ? ' excel-ref-used' : '';
+      return `<td class="${marked ? 'excel-fill-cell' : ''}${refClass}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${content}</td>`;
     }).join('');
     const height = row.height || data.default_row_height || 20;
     return `<tr style="height:${height}px">${excelForm ? '' : `<th>${row.n}</th>`}${cells}</tr>`;
@@ -3071,8 +3151,353 @@ function fitExcelSheet() {
   frame.style.overflow = 'hidden';
 }
 
+const WORD_MAP_KEY = 'cdd-viewer.word-maps';
+const WORD_TICK_KEY = 'cdd-viewer.word-ticks';
+const wordView = { doc: null, page: 1 };
+
+function isWordFile(name) {
+  return /\.docx$/i.test(String(name || ''));
+}
+
+function loadWordMaps() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WORD_MAP_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function wordFieldRecord(file, id) {
+  return loadWordMaps()[`${file}\t${id}`] || null;
+}
+
+function wordFieldLocked(file, id) {
+  return Boolean(wordFieldRecord(file, id)?.lock);
+}
+
+function wordFieldMap(file, id) {
+  const saved = wordFieldRecord(file, id);
+  if (!saved || saved.lock) return null;
+  return usableExcelMap(saved) ? saved : null;
+}
+
+function saveWordFieldMap(file, id, field) {
+  const all = loadWordMaps();
+  all[`${file}\t${id}`] = fieldSnapshot(field);
+  localStorage.setItem(WORD_MAP_KEY, JSON.stringify(all));
+}
+
+function loadWordTicks() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WORD_TICK_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function wordTickOn(file, id) {
+  return Boolean(loadWordTicks()[`${file}\t${id}`]);
+}
+
+function toggleWordTick(file, id) {
+  const all = loadWordTicks();
+  const key = `${file}\t${id}`;
+  if (all[key]) delete all[key];
+  else all[key] = true;
+  localStorage.setItem(WORD_TICK_KEY, JSON.stringify(all));
+}
+
+function wordTickHtml(tick) {
+  const file = $('#excelFile').value;
+  const on = wordTickOn(file, tick.id);
+  const size = Math.max(tick.h || 14, 12);
+  return `<button type="button" class="word-tick${on ? ' on' : ''}" style="left:${tick.x}px;top:${tick.y}px;width:${Math.max(tick.w || 14, 14)}px;height:${size}px" data-word-tick="${esc(tick.id)}" aria-pressed="${on ? 'true' : 'false'}"><input type="checkbox" tabindex="-1"${on ? ' checked' : ''} aria-label="勾選"></button>`;
+}
+
+function toggleWordOriginal(file, id) {
+  const all = loadWordMaps();
+  const key = `${file}\t${id}`;
+  if (all[key]?.lock) delete all[key];
+  else all[key] = { lock: true };
+  localStorage.setItem(WORD_MAP_KEY, JSON.stringify(all));
+}
+
+function wordCss(rules) {
+  const text = rules.filter(Boolean).join(';');
+  return text ? ` style="${text}"` : '';
+}
+
+function wordRunStyle(style) {
+  if (!style) return '';
+  return wordCss([
+    style.bold ? 'font-weight:700' : '',
+    style.italic ? 'font-style:italic' : '',
+    style.underline ? 'text-decoration:underline' : '',
+    style.size ? `font-size:${style.size}pt` : '',
+    style.font ? `font-family:${esc(style.font)}, PMingLiU, sans-serif` : '',
+    style.color ? `color:#${esc(style.color)}` : '',
+  ]);
+}
+
+function wordItemsHtml(items) {
+  return (items || []).map((item) => {
+    if (item.type === 'field') return wordFieldHtml(item);
+    if (item.type === 'break') return '<br>';
+    const text = esc(item.text || '').replace(/\t/g, '<span class="word-tab"></span>');
+    return `<span${wordRunStyle(item.style)}>${text}</span>`;
+  }).join('');
+}
+
+function wordParagraphHtml(block) {
+  const line = block.line
+    ? (block.lineRule === 'auto' ? `line-height:${block.line}` : `line-height:${block.line}px`)
+    : '';
+  return `<p${wordCss([
+    block.align ? `text-align:${block.align}` : '',
+    block.before ? `margin-top:${block.before}px` : '',
+    block.after ? `margin-bottom:${block.after}px` : '',
+    block.left ? `margin-left:${block.left}px` : '',
+    block.right ? `margin-right:${block.right}px` : '',
+    block.first ? `text-indent:${block.first}px` : '',
+    block.hanging ? `padding-left:${block.hanging}px;text-indent:-${block.hanging}px` : '',
+    line,
+  ])}>${wordItemsHtml(block.items) || '<br>'}</p>`;
+}
+
+function wordCellHtml(cell, setup) {
+  const borders = cell.borders || [];
+  const edge = (name, index) => (borders.length ? `border-${name}:${borders[index] ? '1px solid #222' : '0'}` : '');
+  return `<td${cell.span > 1 ? ` colspan="${cell.span}"` : ''}${wordCss([
+    cell.width ? `width:${cell.width}px` : '',
+    cell.align ? `vertical-align:${cell.align}` : '',
+    cell.fill ? `background:#${cell.fill}` : '',
+    edge('top', 0),
+    edge('left', 1),
+    edge('bottom', 2),
+    edge('right', 3),
+  ])}>${wordBlocksHtml(cell.blocks, setup)}</td>`;
+}
+
+function wordPad(padding) {
+  const parts = String(padding || '0').split(/\s+/).map((item) => parseFloat(item) || 0);
+  const [top, right, bottom, left] = parts.length === 1 ? [parts[0], parts[0], parts[0], parts[0]]
+    : parts.length === 2 ? [parts[0], parts[1], parts[0], parts[1]]
+      : parts.length === 3 ? [parts[0], parts[1], parts[2], parts[1]]
+        : [parts[0] || 0, parts[1] || 0, parts[2] || 0, parts[3] || 0];
+  return { top, right, bottom, left };
+}
+
+function wordFrameHtml(block, setup) {
+  const pad = wordPad(setup?.padding);
+  const horizontal = block.anchorH || 'page';
+  const vertical = block.anchorV || 'text';
+  const pageW = setup?.width || 0;
+  const pageH = setup?.height || 0;
+  const boxW = block.width || 0;
+  const boxH = block.height || 0;
+  const inFlow = vertical === 'text' || vertical === 'paragraph' || vertical === 'line';
+  const spanW = horizontal === 'margin' || horizontal === 'column' ? Math.max(0, pageW - pad.left - pad.right) : pageW;
+  const spanH = vertical === 'margin' || vertical === 'topMargin' ? Math.max(0, pageH - pad.top - pad.bottom) : pageH;
+  let x = block.x || 0;
+  let y = block.y || 0;
+  if (block.alignH === 'left') x = 0;
+  else if (block.alignH === 'center') x = Math.round((spanW - boxW) / 2);
+  else if (block.alignH === 'right') x = Math.max(0, spanW - boxW);
+  else if (block.pctX != null) x = Math.round(spanW * block.pctX);
+  if (block.alignV === 'top' || block.alignV === 'inline') y = 0;
+  else if (block.alignV === 'center') y = Math.round((spanH - boxH) / 2);
+  else if (block.alignV === 'bottom') y = Math.max(0, spanH - boxH);
+  else if (block.pctY != null) y = Math.round(spanH * block.pctY);
+  if (!inFlow && (horizontal === 'margin' || horizontal === 'column')) x += pad.left;
+  if (!inFlow && (vertical === 'margin' || vertical === 'topMargin')) y += pad.top;
+  return `<div class="word-frame${inFlow ? ' in-flow' : ''}"${wordCss([
+    inFlow ? 'position:relative' : 'position:absolute',
+    `left:${x}px`,
+    `top:${y}px`,
+    block.width ? `width:${block.width}px` : '',
+    block.height ? `height:${block.height}px` : '',
+    inFlow && block.height ? `margin-bottom:-${block.height}px` : '',
+  ])}>${wordBlocksHtml(block.blocks, setup)}</div>`;
+}
+
+function wordBlocksHtml(blocks, setup) {
+  return (blocks || []).map((block) => {
+    if (block.type === 'frame') return wordFrameHtml(block, setup);
+    if (block.type === 'table') {
+      const rows = (block.rows || []).map((row) => `<tr>${row.map((cell) => wordCellHtml(cell, setup)).join('')}</tr>`).join('');
+      return `<table${wordCss([
+        block.width ? `width:${block.width}px` : '',
+        'table-layout:fixed',
+        block.align === 'center' ? 'margin-left:auto;margin-right:auto' : '',
+        block.align === 'right' ? 'margin-left:auto' : '',
+        block.align !== 'center' && block.align !== 'right' && block.indent ? `margin-left:${block.indent}px` : '',
+      ])}>${rows}</table>`;
+    }
+    return wordParagraphHtml(block);
+  }).join('');
+}
+
+function wordFieldHtml(field) {
+  const file = $('#excelFile').value;
+  const mapped = wordFieldMap(file, field.id);
+  let text = field.text || '';
+  let checked = Boolean(field.checked);
+  if (excelForm && mapped) {
+    if (field.control === 'checkbox') checked = fieldChecked(mapped.key);
+    else text = companyFieldText(mapped.key) || '';
+  }
+  const box = field.control === 'checkbox'
+    ? `<input type="checkbox" tabindex="-1"${checked ? ' checked' : ''} aria-label="${esc(field.name || '欄位')}">`
+    : '';
+  return `<span class="word-field" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${box}${esc(text)}</span>`;
+}
+
+function wordHitHtml(field) {
+  if (field.x == null || field.y == null) return '';
+  const file = $('#excelFile').value;
+  const locked = wordFieldLocked(file, field.id);
+  const mapped = locked ? null : wordFieldMap(file, field.id);
+  let value = '';
+  if (mapped) {
+    value = field.control === 'checkbox'
+      ? (fieldChecked(mapped.key) ? '☑' : '☐')
+      : (companyFieldText(mapped.key) || mapped.label || '');
+  }
+  if (field.enter && !locked && !value) {
+    const cell = Boolean(field.cell);
+    const side = cell ? 16 : Math.max(field.h || 14, 12);
+    const glyph = cell ? "¶" : (field.mark || "↵");
+    return `<button type="button" class="word-hit enter${cell ? " cell" : ""}" title="Enter" style="left:${field.x}px;top:${field.y}px;width:${side}px;height:${side}px;font-size:${Math.max(12, side - 3)}px" data-word-field="${esc(field.id)}" data-word-param="Enter" aria-label="Enter">${esc(glyph)}</button>`;
+  }
+  const shown = value ? `<span class="word-hit-value">${esc(value)}</span>` : '';
+  const size = Math.max(12, Math.min(field.h || 14, 18));
+  const place = locked
+    ? `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`
+    : value
+      ? `left:${field.x}px;top:${field.y}px;min-width:${field.w || 12}px;min-height:${field.h || 14}px;width:max-content;height:auto;font-size:${size}px;line-height:${size}px`
+      : `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`;
+  const mode = locked ? ' original' : `${field.blank ? ' blank' : ''}${value ? ' filled' : ''}`;
+  return `<button type="button" class="word-hit${mode}" title="${esc(value || field.name || '欄位')}" style="${place}" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${shown}</button>`;
+}
+
+function renderWordPage(doc, pageNumber) {
+  const page = (doc.pages || []).find((item) => item.n === Number(pageNumber)) || (doc.pages || [])[0];
+  const scroll = $('#excelScroll');
+  if (!page) {
+    scroll.innerHTML = '';
+    $('#excelMeta').textContent = `${$('#excelFile').value}　沒有內容`;
+    return;
+  }
+  const file = $('#excelFile').value;
+  const src = `/api/word/page?file=${encodeURIComponent(file)}&n=${page.n}&v=${encodeURIComponent(doc.asset || '')}`;
+  const hits = (page.fields || []).map(wordHitHtml).join('') + (page.ticks || []).map(wordTickHtml).join('');
+  scroll.innerHTML = `<article class="word-doc word-sheet" style="width:${page.width}px;height:${page.height}px"><img alt="" draggable="false" src="${esc(src)}" width="${page.width}" height="${page.height}">${hits}</article>`;
+  $('#excelMeta').textContent = `${file}　第 ${page.n} 頁，共 ${doc.page_count} 頁。表格裡的綠色區域是可輸入文字的位置。`;
+  $('#excelPage').textContent = '';
+  const pager = document.querySelector('.excel-pager');
+  if (pager) pager.hidden = true;
+  $('#excelSplit').disabled = true;
+  $('#excelLm').disabled = true;
+}
+
+function wordFieldCount(block) {
+  if (!block) return 0;
+  if (block.type === 'frame') return (block.blocks || []).reduce((sum, item) => sum + wordFieldCount(item), 0);
+  if (block.type === 'table') {
+    return (block.rows || []).reduce((sum, row) => sum + row.reduce((cellSum, cell) => cellSum + (cell.blocks || []).reduce((inner, item) => inner + wordFieldCount(item), 0), 0), 0);
+  }
+  return (block.items || []).filter((item) => item.type === 'field').length;
+}
+
+function wordFieldCatalog() {
+  const owners = ['company', 'RO', 'SHARES'];
+  const company = selectedCompany();
+  const addParty = (list, prefix) => {
+    (list || []).forEach((party, index) => {
+      const canon = canonExcelOwner(party.label || party.label_raw || '') || `${prefix}${index + 1}`;
+      if (!owners.includes(canon)) owners.push(canon);
+    });
+  };
+  if (company) {
+    addParty(company.directors, 'DIR');
+    addParty(company.shareholders, 'SH');
+    addParty(company.company_secretaries, 'CS');
+  } else {
+    ['DIR1', 'SH1', 'CS1'].forEach((owner) => owners.push(owner));
+  }
+  const seen = new Set();
+  const pool = [];
+  owners.forEach((owner) => {
+    fieldsForOwner(owner).forEach((spec) => {
+      if (seen.has(spec.key)) return;
+      seen.add(spec.key);
+      pool.push(spec);
+    });
+  });
+  return pool;
+}
+
+function searchWordFields(query) {
+  const pool = wordFieldCatalog();
+  const words = String(query || '')
+    .trim()
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/[._]+/g, ' ')
+    .split(/\s+/)
+    .filter((part) => part.length > 1 || /[^\u0000-\u007f]/.test(part));
+  if (!words.length) return pool.slice(0, 80);
+  return pool.filter((spec) => {
+    const hay = `${spec.group} ${spec.label} ${spec.key}`.toLowerCase();
+    return words.every((word) => hay.includes(word.toLowerCase()));
+  }).slice(0, 80);
+}
+
+function openWordField(node) {
+  const id = node.dataset.wordField;
+  const name = node.dataset.wordParam || '';
+  const menu = ensureExcelMapMenu();
+  menu._wordField = { id, name, file: $('#excelFile').value };
+  menu._wordQuery = '';
+  menu._wordCaret = null;
+  menu._wordAnchor = node;
+  menu._cell = null;
+  menu._input = null;
+  menu._browserMark = null;
+  menu._includeConvert = false;
+  fillExcelMapMenu(null, searchWordFields(''), node, false);
+}
+
+async function loadWordDocument() {
+  const file = $('#excelFile').value;
+  if (!file) {
+    $('#excelMeta').textContent = '請先選擇 Word。';
+    return;
+  }
+  $('#excelMeta').textContent = '正在按 Word 版面繪製，請稍候…';
+  const data = await api(`/api/word/preview?file=${encodeURIComponent(file)}`);
+  wordView.doc = data;
+  const pages = data.pages || [];
+  const select = $('#excelSheet');
+  const requested = Number(select.value) || wordView.page || 1;
+  fillingSheets = true;
+  select.innerHTML = pages.map((page) => `<option value="${page.n}">第 ${page.n} 頁</option>`).join('');
+  const current = pages.some((page) => page.n === requested) ? requested : (pages[0]?.n || 1);
+  select.value = String(current);
+  fillingSheets = false;
+  wordView.page = current;
+  renderWordPage(data, current);
+  syncExcelPickSummary();
+  syncExcelSheetNav();
+  renderFormPages();
+}
+
 async function loadExcelGrid() {
   const file = $('#excelFile').value;
+  if (isWordFile(file)) return loadWordDocument();
+  $('#excelSplit').disabled = false;
+  $('#excelLm').disabled = false;
   if (!file) {
     $('#excelMeta').textContent = '請先選擇 Excel。';
     return;
@@ -3216,7 +3641,9 @@ function ensureExcelMarkUi() {
   excelMarkBar.className = 'excel-mark-bar';
   excelMarkBar.hidden = true;
   excelMarkBar.innerHTML = '<textarea class="excel-mark-text" aria-label="儲存格內容"></textarea>'
-    + '<div class="excel-mark-actions"><button type="button" data-mark-cell>整格 [[]]</button>'
+    + '<p class="excel-ref-line" data-ref-line hidden></p>'
+    + '<div class="excel-mark-actions"><button type="button" data-open-ref hidden>打開引用的格子</button>'
+    + '<button type="button" data-mark-cell>整格 [[]]</button>'
     + '<button type="button" data-mark-part>選取為 [[...]]</button>'
     + '<button type="button" data-mark-lock>保持原值</button></div>'
     + '<p class="excel-mark-hint"></p>';
@@ -3231,6 +3658,7 @@ function ensureExcelMarkUi() {
   excelMarkBar.addEventListener('click', (event) => {
     const cell = excelMarkBar._cell;
     if (!cell) return;
+    if (event.target.closest('[data-open-ref]')) openReferencedCell(cell);
     if (event.target.closest('[data-mark-cell]')) defineWholeCell(cell);
     if (event.target.closest('[data-mark-part]')) definePartialCell(cell);
     if (event.target.closest('[data-mark-lock]')) lockCellValue(cell);
@@ -3255,6 +3683,63 @@ function ensureExcelMarkUi() {
   });
 }
 
+async function openReferencedCell(td) {
+  const ref = String(td?.dataset.excelRef || '').trim();
+  if (!ref) return;
+  closeExcelMapMenu();
+  if (excelMarkBar) excelMarkBar.hidden = true;
+  const cross = /^(?:'([^']+)'|([^!]+))!(\$?[A-Za-z]{1,3}\$?\d+)$/.exec(ref);
+  let sheetName = '';
+  let address = ref.replace(/\$/g, '');
+  if (cross) {
+    sheetName = cross[1] || cross[2];
+    address = cross[3].replace(/\$/g, '');
+  }
+  const cellMatch = /^([A-Za-z]{1,3})(\d+)$/.exec(address);
+  if (sheetName && sheetName !== $('#excelSheet').value) {
+    const names = [...$('#excelSheet').options].map((option) => option.value);
+    if (!names.includes(sheetName)) {
+      $('#excelMeta').textContent = `這格目前引用 ${ref}，該頁不在這份表格裡。`;
+      return;
+    }
+    $('#excelSheet').value = sheetName;
+    excelView.start = 1;
+    syncExcelPickSummary();
+    try {
+      await loadExcelGrid();
+    } catch (err) {
+      $('#excelMeta').textContent = err.message;
+      return;
+    }
+  }
+  if (!cellMatch) {
+    $('#excelMeta').textContent = `這格目前引用 ${ref}。`;
+    return;
+  }
+  const col = cellMatch[1].toUpperCase();
+  const rowNum = Number(cellMatch[2]);
+  if (rowNum < excelView.start || rowNum >= excelView.start + excelView.limit) {
+    excelView.start = Math.floor((rowNum - 1) / excelView.limit) * excelView.limit + 1;
+    try {
+      await loadExcelGrid();
+    } catch (err) {
+      $('#excelMeta').textContent = err.message;
+      return;
+    }
+  }
+  const target = document.querySelector(`td[data-excel-row="${rowNum}"][data-excel-col="${col}"]`);
+  document.querySelectorAll('.excel-ref-target').forEach((cell) => cell.classList.remove('excel-ref-target'));
+  if (!target) {
+    $('#excelMeta').textContent = `這格目前引用 ${ref}，這一頁沒有該格。`;
+    return;
+  }
+  target.classList.add('excel-ref-target');
+  target.scrollIntoView({ block: 'center', inline: 'center' });
+  $('#excelMeta').textContent = `已打開 ${$('#excelSheet').value} 的 ${col}${rowNum}。`;
+  if (cellNeedsMenu(target)) openCellMenu(target, target);
+  else openCellMarker(target);
+}
+
 function openCellMarker(td) {
   ensureExcelMarkUi();
   excelMarkPanel.hidden = true;
@@ -3267,7 +3752,16 @@ function openCellMarker(td) {
     td.dataset.excelCol,
   ).some((mark) => mark.scope === 'lock');
   excelMarkBar.querySelector('[data-mark-lock]').textContent = locked ? '解除鎖定' : '保持原值';
-  excelMarkBar.querySelector('.excel-mark-hint').textContent = '選取一段文字再標為 [[...]]，整格標為 [[]]，或鎖定以保持現在的值。按 Esc 關閉。';
+  const ref = td.dataset.excelRef || '';
+  const refLine = excelMarkBar.querySelector('[data-ref-line]');
+  const openRef = excelMarkBar.querySelector('[data-open-ref]');
+  refLine.hidden = !ref;
+  refLine.textContent = ref ? `目前引用 ${ref}` : '';
+  openRef.hidden = !ref;
+  openRef.textContent = ref ? `打開 ${ref}` : '打開引用的格子';
+  excelMarkBar.querySelector('.excel-mark-hint').textContent = ref
+    ? '這格的公式目前引用上面的格子。可以打開它，或改成 [[]]、[[...]]、保持原值。按 Esc 關閉。'
+    : '選取一段文字再標為 [[...]]，整格標為 [[]]，或鎖定以保持現在的值。按 Esc 關閉。';
   placeNearCell(excelMarkBar, td);
 }
 
@@ -3570,7 +4064,7 @@ function bindExcelPane() {
       link.download = match ? decodeURIComponent(match[1]) : 'form.xlsx';
       link.click();
       URL.revokeObjectURL(url);
-      $('#excelMeta').textContent = '已下載表格檔。Index 沒有拆。其餘工作表按列印範圍分成 IRF-A-P1 這種頁，再用「讀取」開啟這份檔來填。';
+      $('#excelMeta').textContent = '已下載表格檔。Index 沒有拆。其餘工作表按列印範圍分成 IRF-A-P1 這種頁。引用另一格的公式會保留目前顯示的文字，並標出正在引用的格子。';
     } catch (err) {
       $('#excelMeta').textContent = err.message;
     } finally {
@@ -3685,13 +4179,29 @@ function bindExcelPane() {
     $('#excelPage').textContent = '';
     $('#excelPrev').disabled = true;
     $('#excelNext').disabled = true;
-    $('#excelMeta').textContent = '選擇檔案後按讀取。儲存格寫 [[]] 後，該格會變成可搜尋的下拉選單。這不會改資料庫。';
+    $('#excelMeta').textContent = isWordFile($('#excelFile').value)
+      ? '這是 Word 表格。按讀取後可點選欄位，對應參數。'
+      : '選擇檔案後按讀取。儲存格寫 [[]] 後，該格會變成可搜尋的下拉選單。這不會改資料庫。';
+    $('#excelSplit').disabled = isWordFile($('#excelFile').value);
+    $('#excelLm').disabled = isWordFile($('#excelFile').value);
     syncExcelSheetNav();
     renderFormPages();
   });
   ensureExcelMarkUi();
   const scroll = $('#excelScroll');
   scroll.addEventListener('click', (event) => {
+    if (!excelForm && event.target.closest('.word-sheet img')) return;
+    const wordTick = event.target.closest('[data-word-tick]');
+    if (wordTick && !excelForm) {
+      toggleWordTick($('#excelFile').value, wordTick.dataset.wordTick);
+      if (wordView.doc) renderWordPage(wordView.doc, wordView.page);
+      return;
+    }
+    const wordField = event.target.closest('[data-word-field]');
+    if (wordField) {
+      if (!excelForm) openWordField(wordField);
+      return;
+    }
     if (excelForm) return;
     const marked = event.target.closest('[data-browser-scope]');
     if (marked) {
@@ -3777,15 +4287,18 @@ async function init() {
   bindEvents();
   bindExcelPane();
   try {
-    const { files, default: defaultFile } = await api('/api/files');
+    const listed = await api('/api/files');
+    const files = listed.files || [];
+    const defaultFile = listed.default;
     const selectEl = $('#fileSelect');
     const options = files.map((f) => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
+    const preview = listed.preview_files || files;
     selectEl.innerHTML = options;
-    $('#excelFile').innerHTML = options;
-    if (files.length) {
-      selectEl.value = defaultFile || files[0].name;
-      $('#excelFile').value = selectEl.value;
-    }
+    $('#excelFile').innerHTML = preview.map((f) => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
+    if (files.length) selectEl.value = defaultFile || files[0].name;
+    const previewNames = preview.map((item) => item.name);
+    if (previewNames.includes(defaultFile)) $('#excelFile').value = defaultFile;
+    else if (previewNames.length) $('#excelFile').value = previewNames[0];
     syncExcelPickSummary();
   } catch {
     // The company list still comes from MongoDB when the Excel folder cannot be listed.

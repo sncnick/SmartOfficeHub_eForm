@@ -79,10 +79,31 @@ class FormPageTests(unittest.TestCase):
         self.assertEqual(output.sheetnames, ["CDD-P1", "CDD-P2"])
         self.assertEqual(output["CDD-P1"]["A1"].value, "上半")
         self.assertEqual(output["CDD-P2"]["A1"].value, "下半")
-        self.assertEqual(output["CDD-P2"]["B1"].value, "[[]]")
-        self.assertEqual(output["CDD-P2"]["C1"].value, "[[]]")
+        self.assertEqual(output["CDD-P2"]["B1"].value, "")
+        self.assertEqual(output["CDD-P2"]["C1"].value, "")
         self.assertEqual(output["CDD-P2"]["D1"].value, "=A1+B1")
-        self.assertEqual(output["CDD-P2"]["E1"].value, "[[]]")
+        self.assertEqual(output["CDD-P2"]["E1"].value, "")
+        self.assertEqual(output["CDD-P2"]["B1"].comment.text, "引用：A1")
+        self.assertEqual(output["CDD-P2"]["C1"].comment.text, "引用：Z9")
+        self.assertEqual(output["CDD-P2"]["E1"].comment.text, "引用：Index!B15")
+
+    def test_cell_call_keeps_the_shown_text_and_the_reference(self):
+        book = Workbook()
+        form = book.active
+        form.title = "CDD"
+        form["A1"] = "Hong Kong"
+        form["B1"] = "=A1"
+        form.print_area = "A1:B2"
+        shown = Workbook()
+        mirror = shown.active
+        mirror.title = "CDD"
+        mirror["B1"] = "Hong Kong"
+
+        output = split_form_pages(book, shown)
+
+        self.assertEqual(output["CDD"]["B1"].value, "Hong Kong")
+        self.assertEqual(output["CDD"]["B1"].comment.text, "引用：A1")
+        self.assertNotEqual(output["CDD"]["B1"].value, "[[]]")
 
     def test_page_ranges_follow_the_print_area_order(self):
         book = Workbook()

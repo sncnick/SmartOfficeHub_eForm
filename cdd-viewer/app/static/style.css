@@ -185,6 +185,205 @@ body.excel-resizing { cursor: col-resize; user-select: none; }
   white-space: nowrap;
 }
 .excel-grid td { min-width: 0; background: #fff; }
+.excel-grid td[data-excel-ref],
+.excel-grid td.excel-ref-used { position: relative; }
+body:not(.excel-form) .excel-grid td[data-excel-ref]::before {
+  content: attr(data-excel-ref);
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  max-width: calc(100% - 2px);
+  padding: 0 4px;
+  border: 1px solid #047857;
+  border-radius: 0 0 4px 0;
+  background: #059669;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+body:not(.excel-form) .excel-grid td.excel-ref-used { box-shadow: inset 0 0 0 2px #059669; }
+.excel-grid td.excel-ref-target { outline: 2px solid #059669; outline-offset: -2px; }
+.excel-ref-line { margin: 4px 0; color: #047857; font-size: 12px; }
+#excelScroll:has(.word-doc) { background: #d6d3cc; }
+.word-doc {
+  position: relative;
+  box-sizing: border-box;
+  margin: 16px auto;
+  padding: 0;
+  background: #fff;
+  color: #111;
+  box-shadow: 0 1px 8px rgba(15, 23, 42, .2);
+  font-family: Calibri, PMingLiU, "Songti TC", serif;
+  font-size: 11pt;
+  line-height: 1;
+}
+.word-sheet img { display: block; position: relative; z-index: 0; width: 100%; height: 100%; pointer-events: none; }
+.word-hit {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: rgba(16, 185, 129, .18);
+  box-shadow: inset 0 0 0 1.5px #059669;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  overflow: visible;
+}
+.word-hit:hover { z-index: 4; background: rgba(16, 185, 129, .34); }
+.word-hit::after {
+  content: attr(data-word-param);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 2px);
+  display: none;
+  max-width: 180px;
+  padding: 0 4px;
+  background: #059669;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.word-hit:hover::after { display: block; }
+.word-hit-value {
+  display: inline-block;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  background: #fff;
+  color: #111;
+  line-height: inherit;
+  white-space: nowrap;
+  text-overflow: clip;
+}
+.word-hit.filled {
+  z-index: 5;
+  overflow: visible;
+  width: max-content;
+  background: #fff;
+}
+.word-hit.enter {
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: none;
+  color: #047857;
+  font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols", "DejaVu Sans", sans-serif;
+  font-weight: 700;
+  line-height: 1;
+  overflow: visible;
+}
+.word-hit.enter.cell {
+  justify-content: center;
+  border: 1.5px solid #111;
+  border-radius: 3px;
+  background: #fde047;
+  color: #111;
+  box-shadow: 0 0 0 1px #fff;
+  z-index: 20;
+}
+.word-hit.original {
+  background: transparent;
+  box-shadow: none;
+}
+.word-hit.original::after { content: none; }
+.word-tick {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #fff;
+  cursor: pointer;
+}
+.word-tick input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  pointer-events: none;
+}
+body.excel-form .word-tick { pointer-events: none; cursor: default; }
+.word-loose {
+  width: min(794px, 100%);
+  margin: 0 auto 16px;
+  color: #334155;
+  font-size: 13px;
+}
+.word-loose-field {
+  margin: 6px 6px 0 0;
+  padding: 2px 8px;
+  border: 1px solid #059669;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #047857;
+  cursor: pointer;
+}
+body.excel-form .word-hit { background: transparent; box-shadow: none; pointer-events: none; }
+body.excel-form .word-hit.filled { overflow: visible; width: max-content; }
+body.excel-form .word-hit.enter { color: transparent; background: transparent; border-color: transparent; box-shadow: none; }
+body.excel-form .word-hit::after { content: none; }
+body.excel-form .word-loose { display: none; }
+.word-frame { position: absolute; z-index: 2; overflow: visible; }
+.word-frame.in-flow { position: relative; }
+.word-doc p { margin: 0; }
+.word-doc table { border-collapse: collapse; }
+.word-doc td { padding: 0; vertical-align: top; }
+.word-tab { display: inline-block; width: 2em; }
+.word-field {
+  display: inline;
+  position: relative;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #d1fae5;
+  box-shadow: inset 0 -2px 0 #059669;
+  cursor: pointer;
+}
+.word-field::before {
+  content: attr(data-word-param);
+  position: absolute;
+  top: -12px;
+  left: -1px;
+  max-width: 160px;
+  padding: 0 4px;
+  overflow: hidden;
+  border: 1px solid #047857;
+  border-radius: 3px 3px 3px 0;
+  background: #059669;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.word-field input { width: 14px; height: 14px; margin: 0 4px 0 0; pointer-events: none; vertical-align: middle; }
+body.excel-form .word-field { margin-top: 0; padding: 0; border: 0; background: transparent; cursor: default; }
+body.excel-form .word-field::before { content: none; }
 .excel-grid.no-gridlines td { border-color: transparent; }
 .excel-grid thead th { position: sticky; top: 0; z-index: 5; background: #f8fafc; text-align: center; }
 .excel-grid tbody th, .excel-grid thead th:first-child {
@@ -283,6 +482,19 @@ body:not(.excel-form) .excel-scroll .excel-tick input { pointer-events: none; }
   box-shadow: 0 8px 24px rgba(15, 23, 42, .16);
   outline: none;
 }
+.word-map-search { position: sticky; top: 0; z-index: 2; background: #fff; }
+.word-map-query {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  font: inherit;
+  font-size: 13px;
+}
+.word-map-query:focus { outline: 2px solid #059669; outline-offset: -2px; }
+.word-map-search + .excel-map-actions { top: 36px; }
 .excel-map-actions { position: sticky; top: 0; z-index: 1; background: #fff; border-bottom: 1px solid #e5e7eb; }
 .excel-map-menu .excel-map-action { font-weight: 600; }
 .excel-map-menu .excel-map-action.on { box-shadow: inset 3px 0 0 #059669; background: #ecfdf5; }
@@ -947,6 +1159,14 @@ body.excel-form .excel-form-field {
     width: 14px !important;
     height: 14px !important;
   }
+  body.excel-form .word-sheet {
+    margin: 0 !important;
+    box-shadow: none !important;
+    page-break-after: always;
+  }
+  body.excel-form .word-hit { box-shadow: none !important; background: transparent !important; }
+  body.excel-form .word-hit-value { background: #fff !important; }
+  body.excel-form .word-loose { display: none !important; }
   body.excel-form .excel-pane,
   body.excel-form .excel-body,
   body.excel-form .excel-scroll,
@@ -962,5 +1182,13 @@ body.excel-form .excel-form-field {
     flex: none !important;
     max-height: none !important;
     background: #fff !important;
+  }
+  body.excel-form:has(.word-sheet),
+  body.excel-form:has(.word-sheet) .layout,
+  body.excel-form:has(.word-sheet) .excel-pane,
+  body.excel-form:has(.word-sheet) .excel-body,
+  body.excel-form:has(.word-sheet) .excel-scroll {
+    overflow: visible !important;
+    height: auto !important;
   }
 }

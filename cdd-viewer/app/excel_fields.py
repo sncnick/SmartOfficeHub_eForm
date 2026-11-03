@@ -211,7 +211,8 @@ _INLINE = re.compile(r"\[\[\s*([^\[\]]*?)\s*\]\]")
 _TICK_TOKEN = re.compile(r"^(?:\.{2,}|…+|⋯+|．{2,}|。{2,})$")
 # One opening bracket is enough. The whole cluster, including a leftover "]]", is the tick.
 _LOOSE_TICK = re.compile(r"[\[［]{1,2}\s*(?:\.{2,}|…+|⋯+|．{2,}|。{2,})\s*[\]］]{1,3}")
-# ☐ and □ are empty boxes. ☑ is checked and ☒ is crossed. The mark itself is not text.
+# ☐ and □ are empty boxes. ☑ is checked and ☒ is crossed. A standalone 口 is
+# also an empty box. 口 inside a word such as 人口 stays text.
 _BALLOT = {
     "\u2610": False,
     "\u25a1": False,
@@ -222,7 +223,15 @@ _BALLOT = {
     "\u2611": True,
     "\u2612": True,
 }
-_BALLOT_MARK = re.compile("[" + "".join(_BALLOT) + "]")
+def _cjk(char: str) -> bool:
+    code = ord(char)
+    return 0x3400 <= code <= 0x9FFF
+
+
+def _is_box(char: str, previous: str) -> bool:
+    if char in _BALLOT:
+        return True
+    return char == "口" and not (previous and _cjk(previous))
 
 
 def _is_tick_token(token: str) -> bool:
@@ -238,7 +247,7 @@ def inline_parts(value_text: str) -> list[dict] | None:
     ``preview_fill``.
     """
     raw = str(value_text or "")
-    if not _INLINE.search(raw) and not _LOOSE_TICK.search(raw) and not _BALLOT_MARK.search(raw):
+    if not _INLINE.search(raw) and not _LOOSE_TICK.search(raw) and not any(_is_box(char, raw[index - 1] if index else "") for index, char in enumerate(raw)):
         return None
     stripped = raw.strip()
     if _is_unmapped_mark(stripped):
@@ -299,15 +308,17 @@ def inline_parts(value_text: str) -> list[dict] | None:
             with_boxes.append(part)
             continue
         cursor = 0
-        for box in _BALLOT_MARK.finditer(part["text"]):
-            add_piece = part["text"][cursor:box.start()]
+        for index, char in enumerate(part["text"]):
+            if not _is_box(char, part["text"][index - 1] if index else ""):
+                continue
+            add_piece = part["text"][cursor:index]
             if add_piece:
                 if with_boxes and list(with_boxes[-1]) == ["text"]:
                     with_boxes[-1]["text"] += add_piece
                 else:
                     with_boxes.append({"text": add_piece})
-            with_boxes.append({"tick": True, "checked": _BALLOT[box.group()]})
-            cursor = box.end()
+            with_boxes.append({"tick": True, "checked": _BALLOT.get(char, False)})
+            cursor = index + 1
         tail = part["text"][cursor:]
         if tail:
             if with_boxes and list(with_boxes[-1]) == ["text"]:

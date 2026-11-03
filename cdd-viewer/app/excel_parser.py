@@ -1568,6 +1568,14 @@ MAX_PREVIEW_ROWS = 8000
 MAX_PREVIEW_COLS = 40
 
 
+def _cell_reference(note: str) -> str:
+    """Address recorded when a form cell only reads another cell."""
+    for line in str(note or "").splitlines():
+        if line.strip().startswith("引用："):
+            return line.strip().split("：", 1)[1].strip()
+    return ""
+
+
 def _preview_text(value: Any) -> str:
     if value is None:
         return ""
@@ -1724,7 +1732,7 @@ def clip_to_print_area(grid: dict) -> dict | None:
         return None
     min_col = min(area["c1"] for area in areas)
     max_col = max(area["c2"] for area in areas)
-    keys = ("cells", "borders", "fills", "fields", "fonts", "parts")
+    keys = ("cells", "borders", "fills", "fields", "fonts", "parts", "refs")
 
     def covers(row: int, col: int) -> bool:
         return any(area["r1"] <= row <= area["r2"] and area["c1"] <= col <= area["c2"] for area in areas)
@@ -1739,9 +1747,10 @@ def clip_to_print_area(grid: dict) -> dict | None:
             sliced = []
             for col in range(min_col, max_col + 1):
                 source = col - 1
-                value = values[source] if source < len(values) else ("" if key == "cells" else None)
+                blank = "" if key in {"cells", "refs"} else None
+                value = values[source] if source < len(values) else blank
                 if not covers(index, col):
-                    value = "" if key == "cells" else None
+                    value = blank
                 sliced.append(value)
             cloned[key] = sliced
         rows.append({"n": index, **cloned})
@@ -1849,11 +1858,13 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             marked: list[dict | None] = []
             fonts: list[dict | None] = []
             pieces: list[list | None] = []
+            refs: list[str] = []
             row_used = 0
             for cell in row:
                 text = _preview_text(cell.value)
                 comment = getattr(cell, "comment", None)
                 note = str(getattr(comment, "text", "") or "") if comment is not None else ""
+                refs.append(_cell_reference(note))
                 spec, shown = preview_fill(text, note)
                 border = _cell_border(cell, palette)
                 paint = fills(cell)
@@ -1876,6 +1887,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
                 "fields": marked,
                 "fonts": fonts,
                 "parts": pieces,
+                "refs": refs,
                 "height": _row_height(ws, index, fonts),
                 "owners": fill_owners(texts[0] if texts else ""),
             })
@@ -1906,6 +1918,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             item["fields"] = (item["fields"] + [None] * width)[:width]
             item["fonts"] = (item["fonts"] + [None] * width)[:width]
             item["parts"] = (item["parts"] + [None] * width)[:width]
+            item["refs"] = ((item.get("refs") or []) + [""] * width)[:width]
         view = ws.sheet_view
         gridlines = True if view.showGridLines is None else bool(view.showGridLines)
         return {
