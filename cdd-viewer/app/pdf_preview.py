@@ -98,8 +98,8 @@ def _read(raw: bytes) -> dict:
     return {"pages": pages, "asset": hashlib.sha256(raw).hexdigest()[-16:]}
 
 
-def _widgets(page, number: int, crop_w: float, crop_h: float, rotation: int) -> list[dict]:
-    found = []
+def iter_widgets(page, crop_w: float | None = None, crop_h: float | None = None, rotation: int = 0):
+    """Widgets in the same order the preview lists them."""
     annots = page.get("/Annots") or []
     for annot in annots:
         try:
@@ -115,8 +115,24 @@ def _widgets(page, number: int, crop_w: float, crop_h: float, rotation: int) -> 
         rect = obj.get("/Rect")
         if rect is None or len(rect) < 4:
             continue
+        if crop_w is not None and crop_h is not None:
+            box = _display_box([float(item) for item in rect[:4]], _origin(page), crop_w, crop_h, rotation)
+            if box is None:
+                continue
+            x, y, w, h = (_px(box[0]), _px(box[1]), _px(box[2]), _px(box[3]))
+            page_w, page_h = _css_size(crop_w, crop_h, rotation)
+            w = max(0, min(w, page_w - max(0, min(x, page_w - 1))))
+            h = max(0, min(h, page_h - max(0, min(y, page_h - 1))))
+            if w < 4 or h < 4:
+                continue
+        yield obj, kind
+
+
+def _widgets(page, number: int, crop_w: float, crop_h: float, rotation: int) -> list[dict]:
+    found = []
+    for obj, kind in iter_widgets(page, crop_w, crop_h, rotation):
         box = _display_box(
-            [float(item) for item in rect[:4]],
+            [float(item) for item in obj.get("/Rect")[:4]],
             _origin(page),
             crop_w,
             crop_h,

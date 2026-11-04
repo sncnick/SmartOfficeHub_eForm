@@ -2915,8 +2915,8 @@ function excelFillControl(field, value, rowNumber, col) {
   return `<input type="text"${common} value="${esc(value || '')}" placeholder="${esc(field.label)}" autocomplete="off">`;
 }
 
-function renderExcelTable(data) {
-  excelGridData = data;
+function renderExcelTable(data, options = {}) {
+  if (!options.silent) excelGridData = data;
   const scroll = $('#excelScroll');
   const end = data.rows.length ? data.rows[data.rows.length - 1].n : data.start - 1;
   const notes = [];
@@ -2934,20 +2934,23 @@ function renderExcelTable(data) {
     const saved = savedMaps[mapId(row.n, col)];
     if (field.kind === 'pick' && !usableExcelMap(saved)) pendingCount += 1;
   }));
-  if (fillCount) notes.push(`可填 ${fillCount} 格`);
-  if (pendingCount) notes.push(`${pendingCount} 格未對應`);
-  if (data.print_area) notes.push('只顯示列印範圍');
-  $('#excelMeta').textContent = data.row_count
-    ? `${data.sheet}　第 ${data.start}–${end} 行，共 ${data.row_count} 行${notes.length ? `　${notes.join('，')}` : ''}`
-    : `${data.sheet}　沒有內容`;
-  $('#excelPage').textContent = data.row_count ? `${data.start}–${end}` : '';
-  $('#excelPrev').disabled = data.start <= 1;
-  $('#excelNext').disabled = !data.row_count || end >= data.row_count;
-  const pager = document.querySelector('.excel-pager');
-  if (pager) pager.hidden = !data.row_count || (data.start <= 1 && end >= data.row_count);
+  if (!options.silent) {
+    if (fillCount) notes.push(`可填 ${fillCount} 格`);
+    if (pendingCount) notes.push(`${pendingCount} 格未對應`);
+    if (data.print_area) notes.push('只顯示列印範圍');
+    $('#excelMeta').textContent = data.row_count
+      ? `${data.sheet}　第 ${data.start}–${end} 行，共 ${data.row_count} 行${notes.length ? `　${notes.join('，')}` : ''}`
+      : `${data.sheet}　沒有內容`;
+    $('#excelPage').textContent = data.row_count ? `${data.start}–${end}` : '';
+    $('#excelPrev').disabled = data.start <= 1;
+    $('#excelNext').disabled = !data.row_count || end >= data.row_count;
+    const pager = document.querySelector('.excel-pager');
+    if (pager) pager.hidden = !data.row_count || (data.start <= 1 && end >= data.row_count);
+  }
   syncExcelSheetNav();
   renderFormPages();
   if (!data.rows.length) {
+    if (options.html) return '';
     scroll.innerHTML = '<p class="muted small">這個工作表沒有內容。</p>';
     return;
   }
@@ -3006,6 +3009,7 @@ function renderExcelTable(data) {
         if (font.c) style.push(`color:#${font.c}`);
         if (font.w) style.push('white-space:normal');
       }
+      const wrap = Boolean(font && font.w);
       const fill = row.fills && row.fills[index];
       if (fill) style.push(`background:#${fill}`);
       if (span) {
@@ -3061,7 +3065,7 @@ function renderExcelTable(data) {
       else if (field) content = excelMappedControl(field, value, row.n, col, Boolean(rawField && rawField.kind === 'pick'));
       const marked = Boolean(field || inline || whole || partials.length);
       const owners = ` data-excel-owners="${esc(rowOwners.join(','))}" data-excel-source="${esc(row.cells[index] || '')}" data-excel-value="${esc(value)}"${ref ? ` data-excel-ref="${esc(ref)}"` : ''}`;
-      if (excelForm) content = `<span class="excel-cell-show">${content}</span>`;
+      if (excelForm) content = `<span class="excel-cell-show${wrap ? ' wrap' : ''}">${content}</span>`;
       const refClass = pointed ? ' excel-ref-used' : '';
       return `<td class="${marked ? 'excel-fill-cell' : ''}${refClass}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${content}</td>`;
     }).join('');
@@ -3074,8 +3078,15 @@ function renderExcelTable(data) {
   const sheetHead = excelForm ? '' : `<thead><tr><th></th>${head}</tr></thead>`;
   const sheet = `<table class="${gridClass}" style="width:${tableWidth}px;font-size:${fontSize}pt">`
     + `<colgroup>${cols}</colgroup>${sheetHead}<tbody>${body}</tbody></table>`;
-  scroll.innerHTML = excelForm ? `<div class="excel-sheet-frame">${sheet}</div>` : sheet;
+  const markup = excelForm ? `<section class="excel-sheet-frame" data-sheet="${esc(data.sheet)}">${sheet}</section>` : sheet;
+  if (options.html) return markup;
+  scroll.innerHTML = markup;
   if (excelForm) {
+    const frame = scroll.querySelector('.excel-sheet-frame');
+    if (frame) {
+      frame._page = data.page;
+      frame._font = data.default_font_size || 11;
+    }
     fitExcelSheet();
     settleExcelSpill();
   }
@@ -3102,10 +3113,15 @@ function fitParts(bases, target) {
 }
 
 function fitExcelSheet() {
-  const page = excelGridData?.page;
-  const table = document.querySelector('.excel-grid');
-  const frame = document.querySelector('.excel-sheet-frame');
+  const frames = [...document.querySelectorAll('.excel-sheet-frame')];
+  frames.forEach((frame) => fitExcelFrame(frame));
+}
+
+function fitExcelFrame(frame) {
+  const page = frame._page || excelGridData?.page;
+  const table = frame.querySelector('.excel-grid');
   if (!page || !table || !frame) return;
+  const box = excelPaperBox(page);
   const cols = [...table.querySelectorAll('col')];
   const rows = [...table.querySelectorAll('tbody tr')];
   if (!table.dataset.baseWidth) {
@@ -3123,32 +3139,101 @@ function fitExcelSheet() {
   const baseHeights = rows.map((row) => parseFloat(row.dataset.baseHeight) || 0);
   const baseWidth = Number(table.dataset.baseWidth) || baseWidths.reduce((sum, value) => sum + value, 0) || 1;
   const baseHeight = Number(table.dataset.baseHeight) || baseHeights.reduce((sum, value) => sum + value, 0) || 1;
-  const pageWidth = page.content_width || baseWidth;
-  const pageHeight = page.content_height || baseHeight;
-  const targetWidth = Math.max(1, Math.round(pageWidth));
-  const targetHeight = Math.max(1, Math.round(pageHeight));
-  const scaleX = targetWidth / baseWidth;
-  const scaleY = targetHeight / baseHeight;
-  const fontScale = Math.min(scaleX, scaleY);
+  const contentW = Math.max(1, box.width - box.left - box.right);
+  const contentH = Math.max(1, box.height - box.top - box.bottom);
+  const naturalW = baseWidth / 96 * 25.4;
+  const naturalH = baseHeight / 96 * 25.4;
+  const fill = Math.min(contentW / naturalW, contentH / naturalH);
+  const percent = (Number(page.scale) || 100) / 100;
+  const scale = page.fit ? fill : Math.min(percent, fill);
+  const usedW = naturalW * scale;
+  const usedH = naturalH * scale;
+  const font = frame._font || excelGridData?.default_font_size || 11;
+  let fit = frame.querySelector('.excel-sheet-fit');
+  if (!fit) {
+    fit = document.createElement('div');
+    fit.className = 'excel-sheet-fit';
+    frame.insertBefore(fit, table);
+    fit.appendChild(table);
+  }
+  frame.style.boxSizing = 'border-box';
+  frame.style.position = 'relative';
+  frame.style.width = `${box.width}mm`;
+  frame.style.height = `${box.height}mm`;
+  frame.style.maxHeight = `${box.height}mm`;
+  frame.style.padding = '0';
+  frame.style.overflow = 'hidden';
+  fit.style.left = `${box.left}mm`;
+  fit.style.top = `${box.top}mm`;
+  fit.style.right = 'auto';
+  fit.style.bottom = 'auto';
+  fit.style.width = `${usedW}mm`;
+  fit.style.height = `${usedH}mm`;
   fitParts(baseWidths, 10000).forEach((share, index) => {
     cols[index].style.width = `${share / 100}%`;
   });
-  fitParts(baseHeights, targetHeight).forEach((height, index) => {
-    rows[index].style.height = `${height}px`;
+  fitParts(baseHeights, Math.round(usedH * 100)).forEach((share, index) => {
+    const mm = (share / 100).toFixed(2);
+    rows[index].style.height = `${mm}mm`;
+    rows[index].style.maxHeight = `${mm}mm`;
   });
   table.style.width = '100%';
-  table.style.height = `${targetHeight}px`;
-  table.style.zoom = '';
-  table.style.transform = '';
-  const font = excelGridData.default_font_size || 11;
-  const used = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
-  table.style.fontSize = `${font * used}pt`;
+  table.style.height = `${usedH}mm`;
+  table.style.maxHeight = `${usedH}mm`;
+  table.style.zoom = '1';
+  table.style.transform = 'none';
+  table.style.fontSize = `${font * scale}pt`;
   table.querySelectorAll('td[data-base-font]').forEach((cell) => {
-    cell.style.fontSize = `${parseFloat(cell.dataset.baseFont) * used}pt`;
+    cell.style.fontSize = `${parseFloat(cell.dataset.baseFont) * scale}pt`;
   });
-  frame.style.width = '100%';
-  frame.style.height = `${targetHeight}px`;
-  frame.style.overflow = 'hidden';
+  writeExcelFormPages();
+}
+
+function excelPaperBox(page) {
+  const width = Number(page.paper_width);
+  const height = Number(page.paper_height);
+  if (width > 0 && height > 0) {
+    return {
+      width,
+      height,
+      top: Number(page.margin_top) || 0,
+      right: Number(page.margin_right) || 0,
+      bottom: Number(page.margin_bottom) || 0,
+      left: Number(page.margin_left) || 0,
+    };
+  }
+  const contentW = Number(page.content_width) || 700;
+  const contentH = Number(page.content_height) || 900;
+  return {
+    width: (contentW / 96) * 25.4 + 36,
+    height: (contentH / 96) * 25.4 + 40,
+    top: 19,
+    right: 18,
+    bottom: 19,
+    left: 18,
+  };
+}
+
+function writeExcelFormPages() {
+  if (!excelForm) return;
+  let style = document.getElementById('excel-print-page');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'excel-print-page';
+    document.head.appendChild(style);
+  }
+  const frames = [...document.querySelectorAll('.excel-sheet-frame')];
+  const rules = ['@page { margin: 0; }'];
+  frames.forEach((frame, index) => {
+    const box = excelPaperBox(frame._page || {});
+    const name = `excelPage${index}`;
+    frame.dataset.pageName = name;
+    const table = frame.querySelector('.excel-grid');
+    if (table) table.classList.toggle('print-grid', Boolean(frame._page?.print_gridlines));
+    rules.push(`@page ${name} { size: ${box.width}mm ${box.height}mm; margin: 0; }`);
+    rules.push(`body.excel-form .excel-sheet-frame[data-page-name="${name}"] { page: ${name}; }`);
+  });
+  style.textContent = rules.join('\n');
 }
 
 const WORD_MAP_KEY = 'cdd-viewer.word-maps';
@@ -3219,11 +3304,22 @@ function toggleWordTick(file, id) {
   localStorage.setItem(WORD_TICK_KEY, JSON.stringify(all));
 }
 
-function wordTickHtml(tick) {
+function fieldPlace(field, page, extra) {
+  if (page && page.width && page.height) {
+    const pct = (value, total) => `${(Number(value) || 0) / total * 100}%`;
+    return `left:${pct(field.x, page.width)};top:${pct(field.y, page.height)};width:${pct(field.w || 12, page.width)};height:${pct(field.h || 14, page.height)}${extra || ''}`;
+  }
+  return `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px${extra || ''}`;
+}
+
+function wordTickHtml(tick, page) {
   const file = $('#excelFile').value;
   const on = wordTickOn(file, tick.id);
   const size = Math.max(tick.h || 14, 12);
-  return `<button type="button" class="word-tick${on ? ' on' : ''}" style="left:${tick.x}px;top:${tick.y}px;width:${Math.max(tick.w || 14, 14)}px;height:${size}px" data-word-tick="${esc(tick.id)}" aria-pressed="${on ? 'true' : 'false'}"><input type="checkbox" tabindex="-1"${on ? ' checked' : ''} aria-label="勾選"></button>`;
+  const place = page
+    ? fieldPlace({ ...tick, w: Math.max(tick.w || 14, 14), h: size }, page)
+    : `left:${tick.x}px;top:${tick.y}px;width:${Math.max(tick.w || 14, 14)}px;height:${size}px`;
+  return `<button type="button" class="word-tick${on ? ' on' : ''}" style="${place}" data-word-tick="${esc(tick.id)}" aria-pressed="${on ? 'true' : 'false'}"><input type="checkbox" tabindex="-1"${on ? ' checked' : ''} aria-label="勾選"></button>`;
 }
 
 function toggleWordOriginal(file, id) {
@@ -3364,7 +3460,7 @@ function wordFieldHtml(field) {
   return `<span class="word-field" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${box}${esc(text)}</span>`;
 }
 
-function wordHitHtml(field) {
+function wordHitHtml(field, page) {
   if (field.x == null || field.y == null) return '';
   const file = $('#excelFile').value;
   const locked = wordFieldLocked(file, field.id);
@@ -3379,23 +3475,32 @@ function wordHitHtml(field) {
     const cell = Boolean(field.cell);
     const side = cell ? 16 : Math.max(field.h || 14, 12);
     const glyph = cell ? "¶" : (field.mark || "↵");
-    return `<button type="button" class="word-hit enter${cell ? " cell" : ""}" title="Enter" style="left:${field.x}px;top:${field.y}px;width:${side}px;height:${side}px;font-size:${Math.max(12, side - 3)}px" data-word-field="${esc(field.id)}" data-word-param="Enter" aria-label="Enter">${esc(glyph)}</button>`;
+    const place = page
+      ? fieldPlace({ x: field.x, y: field.y, w: side, h: side }, page, `;font-size:${Math.max(12, side - 3)}px`)
+      : `left:${field.x}px;top:${field.y}px;width:${side}px;height:${side}px;font-size:${Math.max(12, side - 3)}px`;
+    return `<button type="button" class="word-hit enter${cell ? " cell" : ""}" title="Enter" style="${place}" data-word-field="${esc(field.id)}" data-word-param="Enter" aria-label="Enter">${esc(glyph)}</button>`;
   }
   const shown = value ? `<span class="word-hit-value">${esc(value)}</span>` : '';
   const pdf = wordView.doc?.kind === 'pdf' && value && field.control !== 'checkbox';
   const size = Math.max(12, Math.min(field.h || 14, 18));
-  const place = locked
-    ? `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`
-    : pdf
+  const place = page
+    ? fieldPlace(field, page)
+    : locked
       ? `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`
-    : value
-      ? `left:${field.x}px;top:${field.y}px;min-width:${field.w || 12}px;min-height:${field.h || 14}px;width:max-content;height:auto;font-size:${size}px;line-height:${size}px`
-      : `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`;
+      : pdf
+        ? `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`
+      : value
+        ? `left:${field.x}px;top:${field.y}px;min-width:${field.w || 12}px;min-height:${field.h || 14}px;width:max-content;height:auto;font-size:${size}px;line-height:${size}px`
+        : `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`;
   const mode = locked ? ' original' : `${field.blank ? ' blank' : ''}${value ? ' filled' : ''}${pdf ? ' pdf-fit' : ''}`;
   return `<button type="button" class="word-hit${mode}" title="${esc(value || field.name || '欄位')}" style="${place}" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${shown}</button>`;
 }
 
 function renderWordPage(doc, pageNumber) {
+  if (excelForm && (doc.pages || []).length) {
+    renderWordFile(doc, pageNumber);
+    return;
+  }
   const page = (doc.pages || []).find((item) => item.n === Number(pageNumber)) || (doc.pages || [])[0];
   const scroll = $('#excelScroll');
   if (!page) {
@@ -3403,11 +3508,9 @@ function renderWordPage(doc, pageNumber) {
     $('#excelMeta').textContent = `${$('#excelFile').value}　沒有內容`;
     return;
   }
+  scroll.innerHTML = wordPageHtml(doc, page);
   const file = $('#excelFile').value;
   const kind = doc.kind === 'pdf' ? 'pdf' : 'word';
-  const src = `/api/${kind}/page?file=${encodeURIComponent(file)}&n=${page.n}&v=${encodeURIComponent(doc.asset || '')}`;
-  const hits = (page.fields || []).map(wordHitHtml).join('') + (page.ticks || []).map(wordTickHtml).join('');
-  scroll.innerHTML = `<article class="word-doc word-sheet" style="width:${page.width}px;height:${page.height}px"><img alt="" draggable="false" src="${esc(src)}" width="${page.width}" height="${page.height}">${hits}</article>`;
   const note = kind === 'pdf'
     ? '綠色區域是 PDF 可填欄位，點一下可對應參數。'
     : '表格裡的綠色區域是可輸入文字的位置。';
@@ -3418,6 +3521,147 @@ function renderWordPage(doc, pageNumber) {
   $('#excelSplit').disabled = true;
   $('#excelLm').disabled = true;
   requestAnimationFrame(fitPdfFieldText);
+}
+
+function wordPageHtml(doc, page, fitted) {
+  const file = $('#excelFile').value;
+  const kind = doc.kind === 'pdf' ? 'pdf' : 'word';
+  const src = `/api/${kind}/page?file=${encodeURIComponent(file)}&n=${page.n}&v=${encodeURIComponent(doc.asset || '')}`;
+  const box = fitted ? page : null;
+  const hits = (page.fields || []).map((field) => wordHitHtml(field, box)).join('') + (page.ticks || []).map((tick) => wordTickHtml(tick, box)).join('');
+  const sheetStyle = fitted ? 'width:100%;height:100%' : `width:${page.width}px;height:${page.height}px`;
+  const imgSize = fitted ? '' : ` width="${page.width}" height="${page.height}"`;
+  return `<article class="word-doc word-sheet" data-page="${page.n}" style="${sheetStyle}"><img alt="" draggable="false" src="${esc(src)}"${imgSize}>${hits}</article>`;
+}
+
+function renderWordFile(doc, pageNumber) {
+  const pages = doc.pages || [];
+  const scroll = $('#excelScroll');
+  if (!pages.length) {
+    scroll.innerHTML = '';
+    $('#excelMeta').textContent = `${$('#excelFile').value}　沒有內容`;
+    return;
+  }
+  scroll.innerHTML = pages.map((page) => printPageWrap(page, wordPageHtml(doc, page, true))).join('');
+  const file = $('#excelFile').value;
+  $('#excelMeta').textContent = `${file}　共 ${doc.page_count} 頁。列印會印出整份檔案。`;
+  $('#excelPage').textContent = '';
+  const pager = document.querySelector('.excel-pager');
+  if (pager) pager.hidden = true;
+  $('#excelSplit').disabled = true;
+  $('#excelLm').disabled = true;
+  applyLaidPrint(doc);
+  requestAnimationFrame(() => {
+    fitPdfFieldText();
+    scrollToFormSection(pageNumber);
+  });
+}
+
+function printPageWrap(page, inner) {
+  const width = ((page.width / 96) * 25.4).toFixed(2);
+  const height = ((page.height / 96) * 25.4).toFixed(2);
+  return `<section class="print-page" style="--paper-w:${width}mm;--paper-h:${height}mm;--page-w:${page.width};--page-h:${page.height}">${inner}</section>`;
+}
+
+function applyLaidPrint(doc) {
+  const page = (doc.pages || [])[0];
+  if (!page) return;
+  let style = document.getElementById('excel-print-page');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'excel-print-page';
+    document.head.appendChild(style);
+  }
+  const width = ((page.width / 96) * 25.4).toFixed(2);
+  const height = ((page.height / 96) * 25.4).toFixed(2);
+  style.textContent = `@page { size: ${width}mm ${height}mm; margin: 0; }`;
+}
+
+function pdfPrintFields() {
+  fitPdfFieldText();
+  return [...document.querySelectorAll('#excelScroll .word-hit.filled')].map((node) => {
+    const page = node.closest('[data-page]');
+    const value = node.querySelector('.word-hit-value');
+    const text = value?.textContent || '';
+    if (!page || !text || !node.dataset.wordField) return null;
+    const size = value ? parseFloat(value.style.fontSize) : 0;
+    return {
+      page: Number(page.dataset.page),
+      id: node.dataset.wordField,
+      text,
+      size: Number.isFinite(size) ? size : 0,
+    };
+  }).filter(Boolean);
+}
+
+let pdfPrintWindow = null;
+
+function printPdfFile() {
+  const note = document.querySelector('.excel-form-bar span');
+  if (pdfPrintWindow && !pdfPrintWindow.closed) pdfPrintWindow.close();
+  const win = window.open('about:blank', 'cddPdfPrint');
+  pdfPrintWindow = win;
+  if (!win) {
+    if (note) note.textContent = '瀏覽器擋住了列印視窗。請允許彈出視窗後再按一次。';
+    return;
+  }
+  win.document.write('<!doctype html><meta charset="utf-8"><title>列印表格</title><p style="font:16px sans-serif;padding:24px">正在準備 PDF…</p>');
+  win.document.close();
+  fetch('/api/pdf/print', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: $('#excelFile').value, fields: pdfPrintFields() }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error('print');
+    return response.json();
+  }).then((payload) => {
+    win.location.replace(`/api/pdf/print/${encodeURIComponent(payload.token)}`);
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      if (win.closed || Date.now() - started > 8000) {
+        window.clearInterval(timer);
+        if (!win.closed) {
+          win.focus();
+          win.print();
+        }
+        return;
+      }
+      let href = '';
+      try {
+        href = String(win.location.href || '');
+      } catch (err) {
+        window.clearInterval(timer);
+        window.setTimeout(() => {
+          if (!win.closed) {
+            win.focus();
+            win.print();
+          }
+        }, 500);
+        return;
+      }
+      if (!href.includes('/api/pdf/print/')) return;
+      window.clearInterval(timer);
+      window.setTimeout(() => {
+        if (!win.closed) {
+          win.focus();
+          win.print();
+        }
+      }, 600);
+    }, 150);
+  }).catch(() => {
+    if (note) note.textContent = '無法準備這份 PDF，請再按一次列印表格。';
+    if (!win.closed) win.close();
+  });
+}
+
+function scrollToFormSection(id) {
+  const scroll = $('#excelScroll');
+  if (!scroll || id == null || id === '') return false;
+  const wanted = String(id).replace(/"/g, '');
+  const node = [...scroll.querySelectorAll('[data-page], [data-sheet]')].find((item) => item.dataset.page === wanted || item.dataset.sheet === wanted);
+  if (!node) return false;
+  node.scrollIntoView({ block: 'start' });
+  return true;
 }
 
 function fitPdfFieldText() {
@@ -3562,6 +3806,7 @@ async function loadExcelGrid() {
     $('#excelMeta').textContent = '請先選擇 Excel。';
     return;
   }
+  if (excelForm) return loadExcelFormWorkbook();
   $('#excelMeta').textContent = '正在讀取…';
   const query = new URLSearchParams({
     file,
@@ -3583,6 +3828,86 @@ async function loadExcelGrid() {
   renderExcelTable(data);
   applyExcelPrint(data.page);
 }
+
+async function loadExcelFormWorkbook() {
+  const token = ++excelFormToken;
+  const file = $('#excelFile').value;
+  const preferred = $('#excelSheet').value;
+  const run = loadExcelFormSheets(token, file, preferred);
+  excelFormReady = run;
+  return run;
+}
+
+async function loadExcelFormSheets(token, file, preferred) {
+  $('#excelMeta').textContent = '正在讀取…';
+  const base = { file, start: '1', limit: '8000', within_print: 'true' };
+  const firstQuery = new URLSearchParams(base);
+  if (preferred) firstQuery.set('sheet', preferred);
+  const first = await api(`/api/excel/grid?${firstQuery.toString()}`);
+  if (token !== excelFormToken) return;
+  const names = first.sheets || [first.sheet];
+  const note = document.querySelector('.excel-form-bar span');
+  if (note && !note.dataset.idle) note.dataset.idle = note.textContent;
+  const sheetSelect = $('#excelSheet');
+  fillingSheets = true;
+  sheetSelect.innerHTML = names.map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join('');
+  sheetSelect.value = names.includes(preferred) ? preferred : (first.sheet || names[0]);
+  fillingSheets = false;
+  excelView.rowCount = first.row_count || 0;
+  excelView.loaded = true;
+  excelGridData = first;
+  $('#excelScroll').innerHTML = '';
+  placeExcelFormSheet(first, names);
+  applyExcelPrint(first.page);
+  syncExcelPickSummary();
+  const pager = document.querySelector('.excel-pager');
+  if (pager) pager.hidden = true;
+  excelFormTarget = sheetSelect.value;
+  scrollToFormSection(sheetSelect.value);
+  const rest = names.filter((name) => name !== first.sheet);
+  if (note && rest.length) note.textContent = `已顯示這一頁，其餘 ${rest.length} 頁載入中。`;
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  for (const name of rest) {
+    const query = new URLSearchParams(base);
+    query.set('sheet', name);
+    const grid = await api(`/api/excel/grid?${query.toString()}`);
+    if (token !== excelFormToken) return;
+    placeExcelFormSheet(grid, names);
+    excelView.rowCount += grid.row_count || 0;
+    if (grid.sheet === excelFormTarget) scrollToFormSection(grid.sheet);
+  }
+  if (token !== excelFormToken) return;
+  $('#excelMeta').textContent = `${file}　共 ${names.length} 頁。列印會印出整份檔案。`;
+  if (note && note.dataset.idle) note.textContent = note.dataset.idle;
+}
+
+function placeExcelFormSheet(grid, order) {
+  const scroll = $('#excelScroll');
+  const html = renderExcelTable(grid, { html: true, silent: true });
+  if (!html) return;
+  const holder = document.createElement('div');
+  holder.innerHTML = html;
+  const frame = holder.firstElementChild;
+  if (!frame) return;
+  frame._page = grid.page;
+  frame._font = grid.default_font_size || 11;
+  const index = order.indexOf(grid.sheet);
+  const frames = [...scroll.querySelectorAll(':scope > .excel-sheet-frame')];
+  const before = frames.find((item) => order.indexOf(item.dataset.sheet) > index);
+  if (before) scroll.insertBefore(frame, before);
+  else scroll.appendChild(frame);
+  fitExcelFrame(frame);
+  frame.querySelectorAll('.excel-grid td .excel-cell-show').forEach((show) => {
+    const cell = show.parentElement;
+    if (!cell) return;
+    const spills = show.getBoundingClientRect().width > cell.getBoundingClientRect().width + 1;
+    show.style.zIndex = spills ? '3' : '';
+  });
+}
+
+let excelFormReady = Promise.resolve();
+let excelFormToken = 0;
+let excelFormTarget = '';
 
 function syncExcelPickSummary() {
   const summary = document.querySelector('#excelPickFold > summary');
@@ -3796,11 +4121,20 @@ function shiftExcelSheet(delta) {
   syncExcelPickSummary();
   syncExcelSheetNav();
   renderFormPages();
+  if (excelForm) {
+    excelFormTarget = select.value;
+    scrollToFormSection(select.value);
+    return;
+  }
   loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
 }
 
 function applyExcelPrint(page) {
   if (!page) return;
+  if (excelForm) {
+    writeExcelFormPages();
+    return;
+  }
   let style = document.getElementById('excel-print-page');
   if (!style) {
     style = document.createElement('style');
@@ -4195,11 +4529,23 @@ function bindExcelPane() {
     document.body.classList.add('excel-form');
     const bar = document.createElement('div');
     bar.className = 'excel-form-bar';
-    bar.innerHTML = '<button type="button" id="excelPrint">列印表格</button><span>已對應的欄位會自動填上。只有勾選框可以勾選，不能再改對應。</span>';
+    bar.innerHTML = '<button type="button" id="excelPrint">列印表格</button><span>列印整份檔案。已對應的欄位會自動填上。只有勾選框可以勾選，不能再改對應。</span>';
     const nav = document.querySelector('.excel-page-nav');
     if (nav) bar.querySelector('#excelPrint').after(nav);
     $('#excelBody').prepend(bar);
-    $('#excelPrint').addEventListener('click', () => window.print());
+    $('#excelPrint').addEventListener('click', () => {
+      if (wordView.doc?.kind === 'pdf') {
+        printPdfFile();
+        return;
+      }
+      const images = [...document.querySelectorAll('.word-sheet img')];
+      Promise.all(images.map((img) => (img.complete ? null : img.decode().catch(() => {})))).then(async () => {
+        await excelFormReady;
+        fitPdfFieldText();
+        fitExcelSheet();
+        window.print();
+      });
+    });
     window.addEventListener('resize', fitExcelSheet);
     window.addEventListener('beforeprint', fitExcelPrint);
     window.addEventListener('afterprint', () => fitExcelSheet());

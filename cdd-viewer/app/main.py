@@ -25,6 +25,7 @@ from .form_pages import split_workbook_bytes
 from .word_layout import WordLayoutError, blank_gaps, clip_gaps, collect_fields, collect_ticks, layout_docx, page_png, place_fields
 from .word_preview import WordPreviewError, preview_docx
 from .pdf_preview import PdfPreviewError, page_png as pdf_page_png, preview_pdf
+from .pdf_print import compose_pdf, recall as recall_pdf_print, remember as remember_pdf_print
 from .lmstudio import LmStudioError, analyze_sheet, lmstudio_base, status as lmstudio_status
 from .store import get_store
 
@@ -529,6 +530,32 @@ def pdf_page(file: str, n: int = 1) -> Response:
         log.warning("cannot read pdf: %s", type(exc).__name__)
         raise HTTPException(422, "無法讀取這個 PDF") from exc
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/api/pdf/print")
+async def pdf_print(payload: dict = Body(...)) -> dict:
+    """Build the original PDF, with typed values, for the browser PDF print."""
+    path = _resolve_pdf(str(payload.get("file") or ""))
+    fields = payload.get("fields") if isinstance(payload.get("fields"), list) else []
+    try:
+        pdf = await run_in_threadpool(compose_pdf, path, fields)
+    except PdfPreviewError as exc:
+        raise HTTPException(422, "無法準備這份 PDF") from exc
+    except OSError as exc:
+        raise HTTPException(422, "無法準備這份 PDF") from exc
+    return {"token": remember_pdf_print(pdf)}
+
+
+@app.get("/api/pdf/print/{token}")
+def pdf_print_file(token: str) -> Response:
+    pdf = recall_pdf_print(token)
+    if pdf is None:
+        raise HTTPException(404, "這次列印已經過期，請再按一次列印表格")
+    return Response(
+        pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=form.pdf", "Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/files")

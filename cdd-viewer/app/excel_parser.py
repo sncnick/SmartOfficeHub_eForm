@@ -14,6 +14,7 @@ from __future__ import annotations
 import colorsys
 import datetime as dt
 import re
+import threading
 import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
@@ -1695,7 +1696,15 @@ def _page_setup(ws) -> dict:
         "paper": _PAPER_NAME.get(paper, "A4"),
         "orientation": orientation,
         "margin": f"{top}in {right}in {bottom}in {left}in",
+        "margin_top": round(top * 25.4, 2),
+        "margin_right": round(right * 25.4, 2),
+        "margin_bottom": round(bottom * 25.4, 2),
+        "margin_left": round(left * 25.4, 2),
+        "paper_width": round(width_mm, 2),
+        "paper_height": round(height_mm, 2),
         "fit": bool(fit_flag),
+        "fit_width": int(setup.fitToWidth) if setup.fitToWidth else None,
+        "fit_height": int(setup.fitToHeight) if setup.fitToHeight else None,
         "scale": int(setup.scale or 100),
         "content_width": max(1, round((width_mm - (left + right) * 25.4) * 96 / 25.4)),
         "content_height": max(1, round((height_mm - (top + bottom) * 25.4) * 96 / 25.4)),
@@ -1859,9 +1868,22 @@ def _referenced_text(cell) -> str | None:
 
 def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) -> dict:
     """Read one worksheet for display, including text, fills and the drawn borders."""
-    values_source, formula_source = _preview_sources(source)
-    wb = openpyxl.load_workbook(values_source, data_only=True)
-    formulas = openpyxl.load_workbook(formula_source, data_only=False)
+    locked = False
+    owned = True
+    if isinstance(source, (str, Path)):
+        _PREVIEW_LOCK.acquire()
+        locked = True
+        try:
+            wb, formulas = _cached_books(Path(source))
+        except Exception:
+            _PREVIEW_LOCK.release()
+            locked = False
+            raise
+        owned = False
+    else:
+        values_source, formula_source = _preview_sources(source)
+        wb = openpyxl.load_workbook(values_source, data_only=True)
+        formulas = openpyxl.load_workbook(formula_source, data_only=False)
     try:
         names = list(wb.sheetnames)
         if not names:
@@ -1978,8 +2000,37 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
             "truncated_columns": truncated_columns,
         }
     finally:
-        wb.close()
-        formulas.close()
+        if owned:
+            wb.close()
+            formulas.close()
+        if locked:
+            _PREVIEW_LOCK.release()
+
+
+_PREVIEW_BOOKS: dict[str, tuple[int, object, object]] = {}
+_PREVIEW_LOCK = threading.Lock()
+
+
+def _cached_books(path: Path):
+    """Keep the opened workbook so the next sheet does not read the file again."""
+    resolved = path.resolve()
+    stamp = resolved.stat().st_mtime_ns
+    key = str(resolved)
+    cached = _PREVIEW_BOOKS.get(key)
+    if cached and cached[0] == stamp:
+        return cached[1], cached[2]
+    for old, (_stamp, old_values, old_formulas) in list(_PREVIEW_BOOKS.items()):
+        try:
+            old_values.close()
+            old_formulas.close()
+        except Exception:
+            pass
+        _PREVIEW_BOOKS.pop(old, None)
+    values, formula_source = _preview_sources(resolved)
+    book = openpyxl.load_workbook(values, data_only=True)
+    formula_book = openpyxl.load_workbook(formula_source, data_only=False)
+    _PREVIEW_BOOKS[key] = (stamp, book, formula_book)
+    return book, formula_book
 
 
 def _preview_sources(source):

@@ -77,12 +77,17 @@ class PreviewSheetTests(unittest.TestCase):
         sheet.row_dimensions[1].height = 30
         sheet["B1"] = "Wide"
         sheet["B1"].font = Font(name="Calibri", size=18, bold=True)
+        sheet["A2"] = "Wrapped line"
+        sheet["A2"].alignment = openpyxl.styles.Alignment(wrap_text=True)
+        sheet["C2"] = "Spill"
         buffer = BytesIO()
         book.save(buffer)
         preview = preview_sheet(buffer.getvalue(), "CDD")
         self.assertEqual(preview["widths"][1], round(30 * 7 + 5))
         self.assertEqual(preview["rows"][0]["height"], round(30 * 96 / 72))
         self.assertEqual(preview["rows"][0]["fonts"][1], {"s": 18.0, "b": True})
+        self.assertTrue(preview["rows"][1]["fonts"][0]["w"])
+        self.assertFalse((preview["rows"][1]["fonts"][2] or {}).get("w"))
 
     def test_cell_mark_and_comment_become_fillable_fields(self):
         from openpyxl.comments import Comment
@@ -220,6 +225,12 @@ class PreviewSheetTests(unittest.TestCase):
         self.assertEqual(page["paper"], "A4")
         self.assertEqual(page["orientation"], "landscape")
         self.assertTrue(page["fit"])
+        self.assertEqual(page["fit_width"], 1)
+        self.assertEqual(page["fit_height"], 1)
+        self.assertEqual(page["paper_width"], 297.0)
+        self.assertEqual(page["paper_height"], 210.0)
+        self.assertEqual(page["margin_left"], 12.7)
+        self.assertEqual(page["margin_right"], 12.7)
         self.assertTrue(page["margin"].endswith("0.5in"))
         self.assertEqual(page["print_area"], [])
 
