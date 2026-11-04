@@ -3121,7 +3121,9 @@ function fitExcelFrame(frame) {
   const page = frame._page || excelGridData?.page;
   const table = frame.querySelector('.excel-grid');
   if (!page || !table || !frame) return;
-  const box = excelPaperBox(page);
+  const hosted = frame.querySelector('.excel-sheet-fit');
+  if (hosted && hosted.contains(table)) frame.insertBefore(table, hosted);
+  if (hosted) hosted.remove();
   const cols = [...table.querySelectorAll('col')];
   const rows = [...table.querySelectorAll('tbody tr')];
   if (!table.dataset.baseWidth) {
@@ -3139,54 +3141,61 @@ function fitExcelFrame(frame) {
   const baseHeights = rows.map((row) => parseFloat(row.dataset.baseHeight) || 0);
   const baseWidth = Number(table.dataset.baseWidth) || baseWidths.reduce((sum, value) => sum + value, 0) || 1;
   const baseHeight = Number(table.dataset.baseHeight) || baseHeights.reduce((sum, value) => sum + value, 0) || 1;
-  const contentW = Math.max(1, box.width - box.left - box.right);
-  const contentH = Math.max(1, box.height - box.top - box.bottom);
-  const naturalW = baseWidth / 96 * 25.4;
-  const naturalH = baseHeight / 96 * 25.4;
-  const fill = Math.min(contentW / naturalW, contentH / naturalH);
-  const percent = (Number(page.scale) || 100) / 100;
-  const scale = page.fit ? fill : Math.min(percent, fill);
-  const usedW = naturalW * scale;
-  const usedH = naturalH * scale;
-  const font = frame._font || excelGridData?.default_font_size || 11;
-  let fit = frame.querySelector('.excel-sheet-fit');
-  if (!fit) {
-    fit = document.createElement('div');
-    fit.className = 'excel-sheet-fit';
-    frame.insertBefore(fit, table);
-    fit.appendChild(table);
+  const pageWidth = page.content_width || baseWidth;
+  const pageHeight = page.content_height || baseHeight;
+  const room = Math.max(48, Math.round(pageHeight * 0.06));
+  const fitWidth = pageWidth;
+  const fitHeight = Math.max(1, pageHeight - room);
+  const fitScale = Math.min(fitWidth / baseWidth, fitHeight / baseHeight);
+  const excelScale = (Number(page.scale) || 100) / 100;
+  let scale = sheetPrintsAsOnePage(page) ? fitScale : Math.min(excelScale, fitScale);
+  const applyScale = (value) => {
+    const px = (item) => Math.max(1, Math.round((parseFloat(item) || 0) * value));
+    cols.forEach((col, index) => { col.style.width = `${px(baseWidths[index])}px`; });
+    rows.forEach((row, index) => {
+      const height = px(baseHeights[index]);
+      row.style.height = `${height}px`;
+      row.style.maxHeight = `${height}px`;
+      row.querySelectorAll('td').forEach((cell) => {
+        cell.style.height = `${height}px`;
+        cell.style.maxHeight = `${height}px`;
+        cell.style.overflow = 'hidden';
+      });
+    });
+    const width = baseWidths.reduce((sum, item) => sum + px(item), 0);
+    table.style.cssText = '';
+    table.style.width = `${width}px`;
+    table.style.maxWidth = `${Math.round(fitWidth)}px`;
+    table.style.margin = '0';
+    table.style.position = 'static';
+    const font = frame._font || excelGridData?.default_font_size || 11;
+    table.style.fontSize = `${font * value}pt`;
+    table.querySelectorAll('td[data-base-font]').forEach((cell) => {
+      cell.style.fontSize = `${parseFloat(cell.dataset.baseFont) * value}pt`;
+    });
+    if (page.center_h) table.style.marginLeft = `${Math.max(0, Math.round((fitWidth - width) / 2))}px`;
+  };
+  applyScale(scale);
+  if (table.scrollWidth > fitWidth + 1 || table.scrollHeight > fitHeight + 1) {
+    scale *= Math.min(fitWidth / Math.max(1, table.scrollWidth), fitHeight / Math.max(1, table.scrollHeight));
+    applyScale(scale);
   }
-  frame.style.boxSizing = 'border-box';
+  frame.style.cssText = '';
+  frame.style.display = 'block';
   frame.style.position = 'relative';
-  frame.style.width = `${box.width}mm`;
-  frame.style.height = `${box.height}mm`;
-  frame.style.maxHeight = `${box.height}mm`;
+  frame.style.width = '100%';
+  frame.style.height = 'auto';
+  frame.style.margin = '0';
   frame.style.padding = '0';
   frame.style.overflow = 'hidden';
-  fit.style.left = `${box.left}mm`;
-  fit.style.top = `${box.top}mm`;
-  fit.style.right = 'auto';
-  fit.style.bottom = 'auto';
-  fit.style.width = `${usedW}mm`;
-  fit.style.height = `${usedH}mm`;
-  fitParts(baseWidths, 10000).forEach((share, index) => {
-    cols[index].style.width = `${share / 100}%`;
-  });
-  fitParts(baseHeights, Math.round(usedH * 100)).forEach((share, index) => {
-    const mm = (share / 100).toFixed(2);
-    rows[index].style.height = `${mm}mm`;
-    rows[index].style.maxHeight = `${mm}mm`;
-  });
-  table.style.width = '100%';
-  table.style.height = `${usedH}mm`;
-  table.style.maxHeight = `${usedH}mm`;
-  table.style.zoom = '1';
-  table.style.transform = 'none';
-  table.style.fontSize = `${font * scale}pt`;
-  table.querySelectorAll('td[data-base-font]').forEach((cell) => {
-    cell.style.fontSize = `${parseFloat(cell.dataset.baseFont) * scale}pt`;
-  });
   writeExcelFormPages();
+}
+
+function sheetPrintsAsOnePage(page) {
+  if (!page?.fit) return false;
+  const wide = Number(page.fit_width);
+  const tall = Number(page.fit_height);
+  return (!wide || wide === 1) && (!tall || tall === 1);
 }
 
 function excelPaperBox(page) {
@@ -3223,14 +3232,20 @@ function writeExcelFormPages() {
     document.head.appendChild(style);
   }
   const frames = [...document.querySelectorAll('.excel-sheet-frame')];
-  const rules = ['@page { margin: 0; }'];
+  const rules = [];
+  if (frames[0]) {
+    const first = excelPaperBox(frames[0]._page || {});
+    const margin = frames[0]._page?.margin || '0.75in 0.7in 0.75in 0.7in';
+    rules.push(`@page { size: ${first.width}mm ${first.height}mm; margin: ${margin}; }`);
+  }
   frames.forEach((frame, index) => {
     const box = excelPaperBox(frame._page || {});
     const name = `excelPage${index}`;
     frame.dataset.pageName = name;
     const table = frame.querySelector('.excel-grid');
     if (table) table.classList.toggle('print-grid', Boolean(frame._page?.print_gridlines));
-    rules.push(`@page ${name} { size: ${box.width}mm ${box.height}mm; margin: 0; }`);
+    const margin = frame._page?.margin || '0.75in 0.7in 0.75in 0.7in';
+    rules.push(`@page ${name} { size: ${box.width}mm ${box.height}mm; margin: ${margin}; }`);
     rules.push(`body.excel-form .excel-sheet-frame[data-page-name="${name}"] { page: ${name}; }`);
   });
   style.textContent = rules.join('\n');
@@ -3857,7 +3872,7 @@ async function loadExcelFormSheets(token, file, preferred) {
   excelView.loaded = true;
   excelGridData = first;
   $('#excelScroll').innerHTML = '';
-  placeExcelFormSheet(first, names);
+  printAreaGrids(first).forEach((part) => placeExcelFormSheet(part, names));
   applyExcelPrint(first.page);
   syncExcelPickSummary();
   const pager = document.querySelector('.excel-pager');
@@ -3872,13 +3887,53 @@ async function loadExcelFormSheets(token, file, preferred) {
     query.set('sheet', name);
     const grid = await api(`/api/excel/grid?${query.toString()}`);
     if (token !== excelFormToken) return;
-    placeExcelFormSheet(grid, names);
+    printAreaGrids(grid).forEach((part) => placeExcelFormSheet(part, names));
     excelView.rowCount += grid.row_count || 0;
     if (grid.sheet === excelFormTarget) scrollToFormSection(grid.sheet);
   }
   if (token !== excelFormToken) return;
   $('#excelMeta').textContent = `${file}　共 ${names.length} 頁。列印會印出整份檔案。`;
   if (note && note.dataset.idle) note.textContent = note.dataset.idle;
+}
+
+function printAreaGrids(grid) {
+  const areas = (grid.page && grid.page.print_area) || [];
+  if (areas.length <= 1) return [{ ...grid, _area: 0 }];
+  const minCol = Math.min(...areas.map((area) => area.c1));
+  return areas.map((area, index) => {
+    const start = area.c1 - minCol;
+    const end = area.c2 - minCol + 1;
+    const slice = (list) => (list || []).slice(start, end);
+    const rows = (grid.rows || []).filter((row) => row.n >= area.r1 && row.n <= area.r2).map((row) => ({
+      ...row,
+      cells: slice(row.cells),
+      borders: slice(row.borders),
+      fills: slice(row.fills),
+      fields: slice(row.fields),
+      fonts: slice(row.fonts),
+      parts: slice(row.parts),
+      refs: slice(row.refs),
+    }));
+    const colStart = start + 1;
+    const colEnd = end;
+    const merges = (grid.merges || []).filter((merge) => {
+      const rowEnd = merge.r + merge.rs - 1;
+      const mergeEnd = merge.c + merge.cs - 1;
+      return merge.r <= area.r2 && rowEnd >= area.r1 && merge.c <= colEnd && mergeEnd >= colStart;
+    }).map((merge) => {
+      const left = Math.max(merge.c, colStart);
+      const right = Math.min(merge.c + merge.cs - 1, colEnd);
+      return { ...merge, c: left - start, cs: right - left + 1 };
+    });
+    return {
+      ...grid,
+      columns: slice(grid.columns),
+      widths: slice(grid.widths),
+      rows,
+      merges,
+      _area: index,
+    };
+  }).filter((item) => item.columns.length && item.rows.length);
 }
 
 function placeExcelFormSheet(grid, order) {
@@ -3891,9 +3946,14 @@ function placeExcelFormSheet(grid, order) {
   if (!frame) return;
   frame._page = grid.page;
   frame._font = grid.default_font_size || 11;
-  const index = order.indexOf(grid.sheet);
+  frame.dataset.area = String(grid._area || 0);
+  const sheetIndex = order.indexOf(grid.sheet);
   const frames = [...scroll.querySelectorAll(':scope > .excel-sheet-frame')];
-  const before = frames.find((item) => order.indexOf(item.dataset.sheet) > index);
+  const before = frames.find((item) => {
+    const other = order.indexOf(item.dataset.sheet);
+    if (other > sheetIndex) return true;
+    return other === sheetIndex && Number(item.dataset.area || 0) > Number(frame.dataset.area);
+  });
   if (before) scroll.insertBefore(frame, before);
   else scroll.appendChild(frame);
   fitExcelFrame(frame);

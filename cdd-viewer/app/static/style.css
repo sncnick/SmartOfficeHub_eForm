@@ -1140,14 +1140,6 @@ body.excel-form .excel-fold,
 body.excel-form #excelSplit { display: none; }
 .excel-fold input { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; }
 .excel-map-save input { width: auto; flex: 1; min-width: 0; padding: 4px 6px; }
-body.excel-form .excel-sheet-fit {
-  position: absolute;
-  overflow: hidden;
-}
-body.excel-form .excel-sheet-fit .excel-grid {
-  width: 100%;
-  table-layout: fixed;
-}
 .excel-form-bar {
   display: flex;
   align-items: center;
@@ -1231,8 +1223,8 @@ body.excel-form .excel-form-field {
     box-sizing: border-box !important;
     overflow: hidden !important;
     margin: 0 !important;
-    break-inside: auto;
-    page-break-inside: auto;
+    break-inside: avoid;
+    page-break-inside: avoid;
     break-before: page;
     page-break-before: always;
     break-after: auto;
@@ -1247,6 +1239,8 @@ body.excel-form .excel-form-field {
     overflow: hidden !important;
   }
   body.excel-form .excel-grid {
+    max-width: 100% !important;
+    table-layout: fixed !important;
     overflow: hidden !important;
   }
   body.excel-form .excel-grid td { overflow: visible !important; }

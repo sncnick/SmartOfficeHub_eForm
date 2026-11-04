@@ -1709,6 +1709,8 @@ def _page_setup(ws) -> dict:
         "content_width": max(1, round((width_mm - (left + right) * 25.4) * 96 / 25.4)),
         "content_height": max(1, round((height_mm - (top + bottom) * 25.4) * 96 / 25.4)),
         "print_gridlines": bool(getattr(ws.print_options, "gridLines", False)),
+        "center_h": bool(getattr(ws.print_options, "horizontalCentered", False)),
+        "center_v": bool(getattr(ws.print_options, "verticalCentered", False)),
         "print_area": _print_area(ws),
     }
 
