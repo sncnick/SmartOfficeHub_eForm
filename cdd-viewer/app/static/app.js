@@ -2333,13 +2333,84 @@ function shiftPendingMaps(delta) {
 }
 
 function fieldSnapshot(field) {
-  return {
+  const snap = {
     key: field.key,
     label: field.label,
     kind: field.kind,
     options: field.options || [],
     group: field.group || '',
   };
+  if (field.kind === 'free') snap.text = String(field.text || '');
+  return snap;
+}
+
+function freeTextField(text) {
+  return { key: 'free', label: '自由文字', kind: 'free', group: '', options: [], text: String(text || '') };
+}
+
+function isFillField(field) {
+  return Boolean(field && (field.kind === 'free' || usableExcelMap(field)));
+}
+
+function formFillTags(fields) {
+  const list = [];
+  (fields || []).forEach((field) => {
+    if (!isFillField(field)) return;
+    const id = `${field.kind}\t${field.key}`;
+    if (list.some((item) => `${item.kind}\t${item.key}` === id)) return;
+    list.push(field);
+  });
+  if (!excelForm || !list.length) return '';
+  const names = list.map((field) => (
+    field.kind === 'free' ? '自由文字' : (field.group ? `${field.group} · ${field.label}` : field.label)
+  ));
+  const keys = list.filter((field) => field.kind !== 'free').map((field) => field.key);
+  const right = keys.length ? `<span class="form-fill-tag form-fill-tag-right">${esc(keys.join('、'))}</span>` : '';
+  return `<span class="form-fill-tag form-fill-tag-left">${esc(names.join('、'))}</span>${right}`;
+}
+
+function freeTextInput(field, wordId) {
+  const word = wordId ? ` data-free-word="${esc(wordId)}"` : '';
+  return `<input class="form-free" type="text"${word} value="${esc(field.text || '')}" aria-label="自由文字" autocomplete="off">`;
+}
+
+function rememberFreeText(input) {
+  const text = input.value;
+  const file = $('#excelFile').value;
+  if (input.dataset.freeWord) {
+    const all = loadWordMaps();
+    const key = `${file}\t${input.dataset.freeWord}`;
+    const saved = all[key];
+    if (!saved || saved.kind !== 'free') return;
+    saved.text = text;
+    all[key] = saved;
+    localStorage.setItem(WORD_MAP_KEY, JSON.stringify(all));
+    return;
+  }
+  const cell = input.closest('td');
+  if (!cell) return;
+  const sheet = excelGridData?.sheet || $('#excelSheet').value;
+  const row = cell.dataset.excelRow;
+  const col = cell.dataset.excelCol;
+  const marks = browserMarks(file, sheet, row, col);
+  let changed = false;
+  const next = marks.map((mark) => {
+    const owns = mark.field?.kind === 'free' || (mark.fields || []).some((item) => item.kind === 'free');
+    if (!owns) return mark;
+    changed = true;
+    const field = mark.field?.kind === 'free' ? { ...mark.field, text } : mark.field;
+    const listed = (mark.fields || []).map((item) => (item.kind === 'free' ? { ...item, text } : item));
+    return { ...mark, field, fields: listed };
+  });
+  if (changed) {
+    setBrowserMarks(file, sheet, row, col, next);
+    return;
+  }
+  const maps = loadExcelMaps();
+  const id = excelMapId(file, sheet, row, col);
+  if (maps[id]?.kind !== 'free') return;
+  maps[id] = { ...maps[id], text };
+  localStorage.setItem(EXCEL_MAPS_KEY, JSON.stringify(maps));
 }
 
 function markFields(mark) {
@@ -2417,13 +2488,7 @@ function commitExcelMap(cell, field) {
   const row = cell.dataset.excelRow;
   const col = cell.dataset.excelCol;
   const maps = loadExcelMaps();
-  maps[excelMapId($('#excelFile').value, $('#excelSheet').value, row, col)] = {
-    key: field.key,
-    label: field.label,
-    kind: field.kind,
-    options: field.options || [],
-    group: field.group || '',
-  };
+  maps[excelMapId($('#excelFile').value, $('#excelSheet').value, row, col)] = fieldSnapshot(field);
   localStorage.setItem(EXCEL_MAPS_KEY, JSON.stringify(maps));
   cell.innerHTML = excelMappedControl(field, row, col, true);
   closeExcelMapMenu();
@@ -2498,6 +2563,13 @@ function chooseMapButton(button) {
       if (wordView.doc) renderWordPage(wordView.doc, wordView.page);
       return;
     }
+    if (button.hasAttribute('data-map-free')) {
+      const prev = wordFieldRecord(word.file, word.id);
+      saveWordFieldMap(word.file, word.id, freeTextField(prev?.kind === 'free' ? prev.text : ''));
+      closeExcelMapMenu();
+      if (wordView.doc) renderWordPage(wordView.doc, wordView.page);
+      return;
+    }
     if (button.dataset.mapIndex == null) return;
     const field = excelMapMenu._results[Number(button.dataset.mapIndex)];
     if (!field) return;
@@ -2515,6 +2587,18 @@ function chooseMapButton(button) {
   if (button.hasAttribute('data-map-lock')) {
     lockCellValue(cell);
     closeExcelMapMenu();
+    return;
+  }
+  if (button.hasAttribute('data-map-free')) {
+    const saved = loadExcelMaps()[excelMapId($('#excelFile').value, $('#excelSheet').value, cell.dataset.excelRow, cell.dataset.excelCol)];
+    const marked = browserMarks(
+      excelGridData?.file || $('#excelFile').value,
+      excelGridData?.sheet || $('#excelSheet').value,
+      cell.dataset.excelRow,
+      cell.dataset.excelCol,
+    ).find((mark) => mark.field?.kind === 'free');
+    const kept = marked?.field?.text || (saved?.kind === 'free' ? saved.text : '');
+    commitExcelMap(cell, freeTextField(kept));
     return;
   }
   if (button.hasAttribute('data-map-whole')) {
@@ -2609,7 +2693,8 @@ function mapActionHtml(cell, includeConvert) {
   const apply = excelMapMenu?._multi
     ? `<button type="button" class="excel-map-action" data-map-apply${count ? '' : ' disabled'}>套用多選${count ? `（${count}）` : ''}</button>`
     : '';
-  return `<div class="excel-map-actions">${refButton}<button type="button" class="excel-map-action" data-map-lock>${keep}</button>${convert}`
+  return `<div class="excel-map-actions">${refButton}<button type="button" class="excel-map-action" data-map-lock>${keep}</button>`
+    + `<button type="button" class="excel-map-action" data-map-free>自由文字</button>${convert}`
     + `<button type="button" class="excel-map-action${multiOn}" data-map-multi>多選</button>${apply}</div>`;
 }
 
@@ -2853,12 +2938,14 @@ function excelFormFieldsHtml(fields) {
   const list = (fields || []).filter(usableExcelMap);
   return `<span class="excel-inline excel-multi">${list.map((field) => {
     if (field.kind === 'bool') return excelFormControl(field);
+    if (field.kind === 'free') return field.text ? `<span class="excel-filled">${esc(field.text)}</span>` : '';
     const text = companyFieldText(field.key);
     return text ? `<span class="excel-filled">${esc(text)}</span>` : '';
   }).filter(Boolean).join('<span class="excel-multi-gap">、</span>')}</span>`;
 }
 
 function excelMappedControl(field, browserScope) {
+  if (field.kind === 'free') return freeTextInput(field);
   if (field.kind === 'bool' && !browserScope) return excelTick(field);
   const name = field.group ? `${field.group} · ${field.label}` : field.label;
   const text = companyFieldText(field.key);
@@ -2876,6 +2963,7 @@ function renderBrowserParts(source, marks) {
     html += esc(stripTickMarks(source.slice(cursor, start)));
     const name = mark.field ? (mark.field.group ? `${mark.field.group} · ${mark.field.label}` : mark.field.label) : '未對應欄位';
     if (excelForm && mark.field && mark.field.kind === 'bool') html += excelFormControl(mark.field);
+    else if (excelForm && mark.field && mark.field.kind === 'free') html += freeTextInput(mark.field);
     else if (excelForm && mark.field) html += `<span class="excel-filled">${esc(companyFieldText(mark.field.key))}</span>`;
     else if (excelForm) html += excelBareTick();
     else {
@@ -3055,6 +3143,7 @@ function renderExcelTable(data, options = {}) {
       else if (excelForm && chosen.length > 1) content = excelFormFieldsHtml(chosen);
       else if (hasTick) content = inline;
       else if (excelForm && partials.length) content = renderBrowserParts(value, partials);
+      else if (excelForm && mapped && mapped.kind === 'free') content = freeTextInput(mapped);
       else if (excelForm && mapped && mapped.kind === 'bool') content = excelFormControl(mapped);
       else if (excelForm && mapped) content = `<span class="excel-filled">${esc(companyFieldText(mapped.key))}</span>`;
       else if (excelForm && (whole || (field && field.kind === 'pick') || isUnmappedMark(row.cells[index] || ''))) content = '';
@@ -3065,9 +3154,22 @@ function renderExcelTable(data, options = {}) {
       else if (field) content = excelMappedControl(field, value, row.n, col, Boolean(rawField && rawField.kind === 'pick'));
       const marked = Boolean(field || inline || whole || partials.length);
       const owners = ` data-excel-owners="${esc(rowOwners.join(','))}" data-excel-source="${esc(row.cells[index] || '')}" data-excel-value="${esc(value)}"${ref ? ` data-excel-ref="${esc(ref)}"` : ''}`;
+      const formFields = [];
+      const pushFill = (item) => {
+        if (locked || !isFillField(item)) return;
+        const id = `${item.kind}\t${item.key}`;
+        if (formFields.some((field) => `${field.kind}\t${field.key}` === id)) return;
+        formFields.push(item);
+      };
+      chosen.forEach(pushFill);
+      if (!chosen.length) pushFill(mapped);
+      partials.forEach((mark) => pushFill(mark.field));
+      (parsed || []).forEach((part) => pushFill(part.field));
+      const tags = formFillTags(formFields);
       if (excelForm) content = `<span class="excel-cell-show${wrap ? ' wrap' : ''}">${content}</span>`;
       const refClass = pointed ? ' excel-ref-used' : '';
-      return `<td class="${marked ? 'excel-fill-cell' : ''}${wrap ? ' excel-wrap' : ''}${refClass}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${content}</td>`;
+      const fillClass = tags ? ' form-fill' : '';
+      return `<td class="${marked ? 'excel-fill-cell' : ''}${wrap ? ' excel-wrap' : ''}${fillClass}${refClass}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${tags}${content}</td>`;
     }).join('');
     const height = row.height || data.default_row_height || 20;
     return `<tr style="height:${height}px">${excelForm ? '' : `<th>${row.n}</th>`}${cells}</tr>`;
@@ -3471,7 +3573,8 @@ function wordFieldHtml(field) {
   let text = field.text || '';
   let checked = Boolean(field.checked);
   if (excelForm && mapped) {
-    if (field.control === 'checkbox') checked = fieldChecked(mapped.key);
+    if (mapped.kind === 'free') text = mapped.text || '';
+    else if (field.control === 'checkbox') checked = fieldChecked(mapped.key);
     else text = companyFieldText(mapped.key) || '';
   }
   const box = field.control === 'checkbox'
@@ -3486,7 +3589,8 @@ function wordHitHtml(field, page) {
   const locked = wordFieldLocked(file, field.id);
   const mapped = locked ? null : wordFieldMap(file, field.id);
   let value = '';
-  if (mapped) {
+  if (mapped?.kind === 'free') value = mapped.text || '';
+  else if (mapped) {
     value = field.control === 'checkbox'
       ? (fieldChecked(mapped.key) ? '☑' : '☐')
       : (companyFieldText(mapped.key) || '');
@@ -3500,8 +3604,12 @@ function wordHitHtml(field, page) {
       : `left:${field.x}px;top:${field.y}px;width:${side}px;height:${side}px;font-size:${Math.max(12, side - 3)}px`;
     return `<button type="button" class="word-hit enter${cell ? " cell" : ""}" title="Enter" style="${place}" data-word-field="${esc(field.id)}" data-word-param="Enter" aria-label="Enter">${esc(glyph)}</button>`;
   }
-  const shown = value ? `<span class="word-hit-value">${esc(value)}</span>` : '';
-  const pdf = wordView.doc?.kind === 'pdf' && value && field.control !== 'checkbox';
+  const hasContent = Boolean(String(value || '').trim());
+  const pdfEmpty = excelForm && wordView.doc?.kind === 'pdf' && !hasContent;
+  const shown = mapped?.kind === 'free'
+    ? freeTextInput(mapped, field.id)
+    : (hasContent ? `<span class="word-hit-value">${esc(value)}</span>` : '');
+  const pdf = wordView.doc?.kind === 'pdf' && hasContent && field.control !== 'checkbox' && mapped?.kind !== 'free';
   const size = Math.max(12, Math.min(field.h || 14, 18));
   const place = page
     ? fieldPlace(field, page)
@@ -3509,11 +3617,17 @@ function wordHitHtml(field, page) {
       ? `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`
       : pdf
         ? `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`
-      : value
+      : hasContent
         ? `left:${field.x}px;top:${field.y}px;min-width:${field.w || 12}px;min-height:${field.h || 14}px;width:max-content;height:auto;font-size:${size}px;line-height:${size}px`
         : `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`;
-  const mode = locked ? ' original' : `${field.blank ? ' blank' : ''}${value ? ' filled' : ''}${pdf ? ' pdf-fit' : ''}`;
-  return `<button type="button" class="word-hit${mode}" title="${esc(value || field.name || '欄位')}" style="${place}" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${shown}</button>`;
+  const mode = locked
+    ? ` original${pdfEmpty ? ' form-empty' : ''}`
+    : `${field.blank ? ' blank' : ''}${hasContent ? ' filled' : ''}${mapped?.kind === 'free' ? ' free' : ''}${pdf ? ' pdf-fit' : ''}${excelForm && mapped && hasContent ? ' form-fill' : ''}${pdfEmpty ? ' form-empty' : ''}`;
+  const tags = (excelForm && mapped && (hasContent || pdfEmpty))
+    ? formFillTags([mapped])
+    : (pdfEmpty ? `<span class="form-fill-tag form-fill-tag-left">${esc(field.name || '未填欄位')}</span>` : '');
+  const tag = mapped?.kind === 'free' || (excelForm && mapped) || pdfEmpty ? 'div' : 'button';
+  return `<${tag} class="word-hit${mode}" title="${esc(value || field.name || '欄位')}" style="${place}" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${tags}${shown}</${tag}>`;
 }
 
 function renderWordPage(doc, pageNumber) {
@@ -3600,10 +3714,11 @@ function applyLaidPrint(doc) {
 
 function pdfPrintFields() {
   fitPdfFieldText();
-  return [...document.querySelectorAll('#excelScroll .word-hit.filled')].map((node) => {
+  return [...document.querySelectorAll('#excelScroll .word-hit.filled, #excelScroll .word-hit.free')].map((node) => {
     const page = node.closest('[data-page]');
     const value = node.querySelector('.word-hit-value');
-    const text = value?.textContent || '';
+    const typed = node.querySelector('.form-free');
+    const text = typed ? typed.value : (value?.textContent || '');
     if (!page || !text || !node.dataset.wordField) return null;
     const size = value ? parseFloat(value.style.fontSize) : 0;
     return {
@@ -4848,6 +4963,7 @@ function bindExcelPane() {
     }
     const wordField = event.target.closest('[data-word-field]');
     if (wordField) {
+      if (event.target.closest('.form-free')) return;
       if (!excelForm) openWordField(wordField);
       return;
     }
@@ -4857,7 +4973,7 @@ function bindExcelPane() {
       openMarkDetail(marked);
       return;
     }
-    if (event.target.closest('.excel-map-query, .excel-map-menu, [data-excel-remap]')) return;
+    if (event.target.closest('.form-free, .excel-map-query, .excel-map-menu, [data-excel-remap]')) return;
     const td = excelCellAt(event.clientX, event.clientY);
     if (!td || !scroll.contains(td)) return;
     td.querySelectorAll('.excel-tick input').forEach((input) => {
@@ -4889,6 +5005,11 @@ function bindExcelPane() {
     if (input) showExcelMapMenu(input);
   });
   scroll.addEventListener('input', (event) => {
+    const free = event.target.closest('.form-free');
+    if (free) {
+      rememberFreeText(free);
+      return;
+    }
     const input = event.target.closest('.excel-map-query');
     if (input) showExcelMapMenu(input);
   });
