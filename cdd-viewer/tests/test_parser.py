@@ -80,6 +80,9 @@ class PreviewSheetTests(unittest.TestCase):
         sheet["A2"] = "Wrapped line"
         sheet["A2"].alignment = openpyxl.styles.Alignment(wrap_text=True)
         sheet["C2"] = "Spill"
+        sheet["D2"] = "one\ntwo"
+        sheet["E2"] = "spread"
+        sheet["E2"].alignment = openpyxl.styles.Alignment(horizontal="distributed")
         buffer = BytesIO()
         book.save(buffer)
         preview = preview_sheet(buffer.getvalue(), "CDD")
@@ -88,6 +91,9 @@ class PreviewSheetTests(unittest.TestCase):
         self.assertEqual(preview["rows"][0]["fonts"][1], {"s": 18.0, "b": True})
         self.assertTrue(preview["rows"][1]["fonts"][0]["w"])
         self.assertFalse((preview["rows"][1]["fonts"][2] or {}).get("w"))
+        self.assertEqual(preview["rows"][1]["cells"][3], "one\ntwo")
+        self.assertTrue(preview["rows"][1]["fonts"][3]["w"])
+        self.assertTrue(preview["rows"][1]["fonts"][4]["w"])
 
     def test_cell_mark_and_comment_become_fillable_fields(self):
         from openpyxl.comments import Comment

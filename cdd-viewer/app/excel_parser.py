@@ -1793,24 +1793,35 @@ def _points_to_px(points: float) -> int:
     return max(1, round(float(points) * 96 / 72))
 
 
-def _cell_font(cell, palette: dict[str, str]) -> dict | None:
+def _cell_wraps(cell, text: str) -> bool:
+    """Excel wrap, distributed alignment, or an explicit line break."""
+    alignment = getattr(cell, "alignment", None)
+    if alignment is not None and (
+        alignment.wrap_text
+        or alignment.horizontal in {"justify", "distributed"}
+        or alignment.vertical in {"justify", "distributed"}
+    ):
+        return True
+    return "\n" in text or "\r" in text
+
+
+def _cell_font(cell, palette: dict[str, str], text: str = "") -> dict | None:
     font = getattr(cell, "font", None)
-    if font is None:
-        return None
     spec: dict = {}
-    if font.sz is not None and float(font.sz) != 11:
-        spec["s"] = float(font.sz)
-    if font.b:
-        spec["b"] = True
-    if font.i:
-        spec["i"] = True
-    name = font.name
-    if name and name.lower() not in {"calibri", "等线"}:
-        spec["f"] = name
-    color = _style_color(font.color, palette)
-    if color and color != "000000":
-        spec["c"] = color
-    if getattr(getattr(cell, "alignment", None), "wrap_text", None):
+    if font is not None:
+        if font.sz is not None and float(font.sz) != 11:
+            spec["s"] = float(font.sz)
+        if font.b:
+            spec["b"] = True
+        if font.i:
+            spec["i"] = True
+        name = font.name
+        if name and name.lower() not in {"calibri", "等线"}:
+            spec["f"] = name
+        color = _style_color(font.color, palette)
+        if color and color != "000000":
+            spec["c"] = color
+    if _cell_wraps(cell, text):
         spec["w"] = True
     return spec or None
 
@@ -1934,7 +1945,7 @@ def preview_sheet(source: str | Path | bytes | Any, sheet: str | None = None) ->
                 spec, shown = preview_fill(text, note)
                 border = _cell_border(cell, palette)
                 paint = fills(cell)
-                font = _cell_font(cell, palette)
+                font = _cell_font(cell, palette, text)
                 texts.append(shown)
                 borders.append(border)
                 paints.append(paint)

@@ -207,6 +207,15 @@ select option {
   vertical-align: bottom;
   white-space: nowrap;
 }
+.excel-grid td.excel-wrap,
+.excel-grid td.excel-wrap .excel-inline,
+.excel-grid td.excel-wrap .excel-live,
+.excel-grid td.excel-wrap .excel-filled,
+.excel-grid td.excel-wrap .excel-inline-value {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.excel-grid td.excel-wrap .excel-inline { display: inline; max-width: 100%; }
 .excel-grid td { min-width: 0; background: #fff; }
 .excel-grid td[data-excel-ref],
 .excel-grid td.excel-ref-used { position: relative; }
@@ -1140,6 +1149,57 @@ body.excel-form .excel-fold,
 body.excel-form #excelSplit { display: none; }
 .excel-fold input { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; }
 .excel-map-save input { width: auto; flex: 1; min-width: 0; padding: 4px 6px; }
+body.excel-form #excelScroll {
+  background: #d6d3cc;
+  padding: 12px 28px 36px;
+}
+body.excel-form .print-page {
+  position: relative;
+  margin: 18px auto;
+  background: #fff;
+  box-shadow: 0 1px 8px rgba(15, 23, 42, .18);
+}
+body.excel-form .excel-sheet-frame {
+  position: relative;
+  box-sizing: border-box;
+  width: var(--paper-w, 210mm);
+  margin: 28px auto;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+body.excel-form .form-page-paper {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--paper-h, 297mm);
+  padding: var(--pad-t, 19mm) var(--pad-r, 18mm) var(--pad-b, 19mm) var(--pad-l, 18mm);
+  background: #fff;
+  outline: 1px solid #b7b1a6;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .24);
+  overflow: hidden;
+}
+.form-page-label {
+  position: absolute;
+  z-index: 8;
+  left: 8px;
+  top: 8px;
+  max-width: calc(100% - 16px);
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #1e293b;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  pointer-events: none;
+}
+body.excel-form .excel-sheet-frame > .form-page-label {
+  position: static;
+  display: table;
+  margin: 0 0 8px;
+  max-width: 100%;
+}
 .excel-form-bar {
   display: flex;
   align-items: center;
@@ -1158,6 +1218,7 @@ body.excel-form .excel-grid,
 body.excel-form .excel-grid tr,
 body.excel-form .excel-grid td,
 body.excel-form .excel-grid td.excel-fill-cell { overflow: visible; }
+body.excel-form .excel-grid td:has(.excel-cell-show.wrap) { overflow: hidden; }
 body.excel-form .excel-grid td { position: relative; padding: 0; }
 body.excel-form .excel-cell-show {
   position: absolute;
@@ -1188,16 +1249,18 @@ body.excel-form .excel-cell-show.wrap {
   max-width: 100%;
   display: block;
   overflow: hidden;
-  white-space: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   line-height: 1.15;
 }
 body.excel-form .excel-cell-show.wrap .excel-live,
 body.excel-form .excel-cell-show.wrap .excel-inline,
-body.excel-form .excel-cell-show.wrap .excel-filled {
+body.excel-form .excel-cell-show.wrap .excel-filled,
+body.excel-form .excel-cell-show.wrap .excel-inline-value {
   display: inline;
   width: auto;
   max-width: 100%;
-  white-space: normal;
+  white-space: pre-wrap;
   overflow-wrap: break-word;
 }
 body.excel-form .excel-form-field {
@@ -1221,14 +1284,31 @@ body.excel-form .excel-form-field {
   body.excel-form .excel-sheet-frame {
     position: relative !important;
     box-sizing: border-box !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
     overflow: hidden !important;
     margin: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
     break-inside: avoid;
     page-break-inside: avoid;
     break-before: page;
     page-break-before: always;
     break-after: auto;
     page-break-after: auto;
+  }
+  body.excel-form .form-page-paper {
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+    background: transparent !important;
   }
   body.excel-form .excel-sheet-frame:first-child {
     break-before: auto;
@@ -1244,6 +1324,13 @@ body.excel-form .excel-form-field {
     overflow: hidden !important;
   }
   body.excel-form .excel-grid td { overflow: visible !important; }
+  body.excel-form .excel-grid td:has(.excel-cell-show.wrap) { overflow: hidden !important; }
+  .form-page-label { display: none !important; }
+  body.excel-form .excel-sheet-frame,
+  body.excel-form .print-page {
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
   body.excel-form .excel-form-bar,
   body.excel-form .topbar,
   body.excel-form .source-bar,

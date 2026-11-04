@@ -3007,9 +3007,9 @@ function renderExcelTable(data, options = {}) {
         if (font.i) style.push('font-style:italic');
         if (font.f) style.push(`font-family:${esc(`"${font.f}"`)}, Calibri, sans-serif`);
         if (font.c) style.push(`color:#${font.c}`);
-        if (font.w) style.push('white-space:normal');
       }
-      const wrap = Boolean(font && font.w);
+      const wrap = Boolean(font && font.w) || /[\r\n]/.test(row.cells[index] || '');
+      if (wrap) style.push('white-space:pre-wrap');
       const fill = row.fills && row.fills[index];
       if (fill) style.push(`background:#${fill}`);
       if (span) {
@@ -3067,7 +3067,7 @@ function renderExcelTable(data, options = {}) {
       const owners = ` data-excel-owners="${esc(rowOwners.join(','))}" data-excel-source="${esc(row.cells[index] || '')}" data-excel-value="${esc(value)}"${ref ? ` data-excel-ref="${esc(ref)}"` : ''}`;
       if (excelForm) content = `<span class="excel-cell-show${wrap ? ' wrap' : ''}">${content}</span>`;
       const refClass = pointed ? ' excel-ref-used' : '';
-      return `<td class="${marked ? 'excel-fill-cell' : ''}${refClass}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${content}</td>`;
+      return `<td class="${marked ? 'excel-fill-cell' : ''}${wrap ? ' excel-wrap' : ''}${refClass}" data-excel-row="${row.n}" data-excel-col="${esc(col)}"${owners}${spanAttr}${styleAttr}>${content}</td>`;
     }).join('');
     const height = row.height || data.default_row_height || 20;
     return `<tr style="height:${height}px">${excelForm ? '' : `<th>${row.n}</th>`}${cells}</tr>`;
@@ -3078,7 +3078,7 @@ function renderExcelTable(data, options = {}) {
   const sheetHead = excelForm ? '' : `<thead><tr><th></th>${head}</tr></thead>`;
   const sheet = `<table class="${gridClass}" style="width:${tableWidth}px;font-size:${fontSize}pt">`
     + `<colgroup>${cols}</colgroup>${sheetHead}<tbody>${body}</tbody></table>`;
-  const markup = excelForm ? `<section class="excel-sheet-frame" data-sheet="${esc(data.sheet)}">${sheet}</section>` : sheet;
+  const markup = excelForm ? `<section class="excel-sheet-frame" data-sheet="${esc(data.sheet)}"><div class="form-page-paper">${sheet}</div></section>` : sheet;
   if (options.html) return markup;
   scroll.innerHTML = markup;
   if (excelForm) {
@@ -3151,7 +3151,10 @@ function fitExcelFrame(frame) {
   let scale = sheetPrintsAsOnePage(page) ? fitScale : Math.min(excelScale, fitScale);
   const applyScale = (value) => {
     const px = (item) => Math.max(1, Math.round((parseFloat(item) || 0) * value));
-    cols.forEach((col, index) => { col.style.width = `${px(baseWidths[index])}px`; });
+    const fittedWidth = Math.max(1, Math.round(fitWidth));
+    fitParts(baseWidths, fittedWidth).forEach((width, index) => {
+      cols[index].style.width = `${width}px`;
+    });
     rows.forEach((row, index) => {
       const height = px(baseHeights[index]);
       row.style.height = `${height}px`;
@@ -3162,10 +3165,9 @@ function fitExcelFrame(frame) {
         cell.style.overflow = 'hidden';
       });
     });
-    const width = baseWidths.reduce((sum, item) => sum + px(item), 0);
     table.style.cssText = '';
-    table.style.width = `${width}px`;
-    table.style.maxWidth = `${Math.round(fitWidth)}px`;
+    table.style.width = `${fittedWidth}px`;
+    table.style.maxWidth = `${fittedWidth}px`;
     table.style.margin = '0';
     table.style.position = 'static';
     const font = frame._font || excelGridData?.default_font_size || 11;
@@ -3173,21 +3175,24 @@ function fitExcelFrame(frame) {
     table.querySelectorAll('td[data-base-font]').forEach((cell) => {
       cell.style.fontSize = `${parseFloat(cell.dataset.baseFont) * value}pt`;
     });
-    if (page.center_h) table.style.marginLeft = `${Math.max(0, Math.round((fitWidth - width) / 2))}px`;
   };
   applyScale(scale);
   if (table.scrollWidth > fitWidth + 1 || table.scrollHeight > fitHeight + 1) {
     scale *= Math.min(fitWidth / Math.max(1, table.scrollWidth), fitHeight / Math.max(1, table.scrollHeight));
     applyScale(scale);
   }
+  table.querySelectorAll('td').forEach((cell) => {
+    const wraps = Boolean(cell.querySelector('.excel-cell-show.wrap'));
+    cell.style.overflow = wraps ? 'hidden' : 'visible';
+  });
+  const box = excelPaperBox(page);
   frame.style.cssText = '';
-  frame.style.display = 'block';
-  frame.style.position = 'relative';
-  frame.style.width = '100%';
-  frame.style.height = 'auto';
-  frame.style.margin = '0';
-  frame.style.padding = '0';
-  frame.style.overflow = 'hidden';
+  frame.style.setProperty('--paper-w', `${box.width}mm`);
+  frame.style.setProperty('--paper-h', `${box.height}mm`);
+  frame.style.setProperty('--pad-t', `${box.top}mm`);
+  frame.style.setProperty('--pad-r', `${box.right}mm`);
+  frame.style.setProperty('--pad-b', `${box.bottom}mm`);
+  frame.style.setProperty('--pad-l', `${box.left}mm`);
   writeExcelFormPages();
 }
 
@@ -3575,7 +3580,8 @@ function renderWordFile(doc, pageNumber) {
 function printPageWrap(page, inner) {
   const width = ((page.width / 96) * 25.4).toFixed(2);
   const height = ((page.height / 96) * 25.4).toFixed(2);
-  return `<section class="print-page" style="--paper-w:${width}mm;--paper-h:${height}mm;--page-w:${page.width};--page-h:${page.height}">${inner}</section>`;
+  const name = $('#excelFile').value || '文件';
+  return `<section class="print-page" style="--paper-w:${width}mm;--paper-h:${height}mm;--page-w:${page.width};--page-h:${page.height}"><div class="form-page-label">${esc(name)}　第 ${page.n} 頁</div>${inner}</section>`;
 }
 
 function applyLaidPrint(doc) {
@@ -3962,6 +3968,20 @@ function placeExcelFormSheet(grid, order) {
     if (!cell) return;
     const spills = show.getBoundingClientRect().width > cell.getBoundingClientRect().width + 1;
     show.style.zIndex = spills ? '3' : '';
+  });
+  refreshFormPageLabels();
+}
+
+function refreshFormPageLabels() {
+  document.querySelectorAll('#excelScroll > .excel-sheet-frame').forEach((frame, index) => {
+    let label = frame.querySelector('.form-page-label');
+    if (!label) {
+      label = document.createElement('div');
+      label.className = 'form-page-label';
+    }
+    frame.prepend(label);
+    const name = frame.dataset.sheet || '工作表';
+    label.textContent = `${name}　第 ${index + 1} 頁`;
   });
 }
 
