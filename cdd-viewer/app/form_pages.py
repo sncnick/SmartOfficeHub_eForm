@@ -1,17 +1,19 @@
 """Split a form workbook into one worksheet per printed page.
 
-Pages come from the Excel print area. Several ranges are several pages. One
-range is split only where a manual page break falls inside it. The Index sheet
-is left out. Each page is shifted to the top-left of a new sheet and the sheets
-are assembled into one workbook for filling.
+Pages come from the Excel print area. A manual page break inside a range
+starts another page, including when the sheet has several print areas or none.
+The Index sheet is left out. Each page is shifted to the top-left of a new
+sheet and the sheets are assembled into one workbook for filling.
 """
 
 from __future__ import annotations
 
 import re
+import zipfile
 from copy import copy
 from io import BytesIO
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.cell.cell import MergedCell
@@ -31,21 +33,27 @@ _CELL_REF = re.compile(
     r"""^=\s*(?:(?:\[[^\]]+\])?(?:'((?:[^']|'')+)'|([A-Za-z_][\w.]*))!)?(\$?)([A-Za-z]{1,3})(\$?)(\d+)\s*$""",
     re.IGNORECASE,
 )
+_QUOTED_SHEET = re.compile(r"^'(?P<name>(?:[^']|'')*)'!(?P<cells>.*)$")
+_SSML = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 
-def page_ranges(ws: Worksheet) -> list[tuple[int, int, int, int]]:
+def page_ranges(ws: Worksheet, raw: str | None = None) -> list[tuple[int, int, int, int]]:
     """Return pages as ``(min_col, min_row, max_col, max_row)``."""
-    areas = _print_ranges(ws)
-    if len(areas) > 1:
-        return areas
-    if len(areas) == 1:
-        return _split_on_breaks(ws, areas[0])
-    if ws.max_row and ws.max_column:
-        return [(1, 1, ws.max_column, ws.max_row)]
-    return []
+    formula = raw if raw is not None else str(getattr(ws, "print_area", None) or "")
+    areas = _ranges_from_formula(formula, ws, ws.title)
+    if not areas and ws.max_row and ws.max_column:
+        areas = [(1, 1, ws.max_column, ws.max_row)]
+    pages = []
+    for area in areas:
+        pages.extend(_split_on_breaks(ws, area))
+    return pages
 
 
-def split_form_pages(source: WorkbookType, displayed: WorkbookType | None = None) -> Workbook:
+def split_form_pages(
+    source: WorkbookType,
+    displayed: WorkbookType | None = None,
+    print_areas: dict[str, str] | None = None,
+) -> Workbook:
     """Build a new workbook whose sheets are the printed pages of ``source``.
 
     ``displayed`` is the same file opened with cached values. A formula that only
@@ -57,7 +65,7 @@ def split_form_pages(source: WorkbookType, displayed: WorkbookType | None = None
     for ws in source.worksheets:
         if _ignored(ws.title):
             continue
-        ranges = page_ranges(ws)
+        ranges = page_ranges(ws, _raw_for(print_areas, ws.title))
         if not ranges:
             continue
         shown = displayed[ws.title] if displayed is not None and ws.title in displayed.sheetnames else None
@@ -76,7 +84,7 @@ def split_workbook_bytes(path: Path) -> bytes:
     book = load_workbook(path)
     displayed = load_workbook(path, data_only=True)
     try:
-        output = split_form_pages(book, displayed)
+        output = split_form_pages(book, displayed, _workbook_print_areas(path))
         buffer = BytesIO()
         output.save(buffer)
         return buffer.getvalue()
@@ -89,21 +97,113 @@ def _ignored(title: str) -> bool:
     return title.strip().lower() == "index"
 
 
-def _print_ranges(ws: Worksheet) -> list[tuple[int, int, int, int]]:
-    raw = str(getattr(ws, "print_area", None) or "").strip()
+def _raw_for(print_areas: dict[str, str] | None, title: str) -> str | None:
+    if not print_areas:
+        return None
+    if title in print_areas:
+        return print_areas[title]
+    folded = title.casefold()
+    for name, raw in print_areas.items():
+        if name.casefold() == folded:
+            return raw
+    return None
+
+
+def _workbook_print_areas(path: Path) -> dict[str, str]:
+    """Print-area formulas keyed by sheet. Read from the file so a range openpyxl rejects is kept."""
+    try:
+        with zipfile.ZipFile(path) as book:
+            root = ET.fromstring(book.read("xl/workbook.xml"))
+    except (OSError, KeyError, ET.ParseError):
+        return {}
+    sheets = [node.attrib.get("name", "") for node in root.findall(f"{_SSML}sheets/{_SSML}sheet")]
+    grouped: dict[str, list[str]] = {}
+    for node in root.findall(f"{_SSML}definedNames/{_SSML}definedName"):
+        if node.attrib.get("name") != "_xlnm.Print_Area":
+            continue
+        text = (node.text or "").strip().lstrip("=")
+        if not text:
+            continue
+        owner = ""
+        sheet_id = node.attrib.get("localSheetId")
+        if sheet_id is not None:
+            try:
+                owner = sheets[int(sheet_id)]
+            except (ValueError, IndexError):
+                owner = ""
+        grouped.setdefault(owner, []).append(text)
+    return {name: ",".join(parts) for name, parts in grouped.items() if name}
+
+
+def _split_union(raw: str) -> list[str]:
+    parts = []
+    buf: list[str] = []
+    quoted = False
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if char == "'":
+            if quoted and index + 1 < len(raw) and raw[index + 1] == "'":
+                buf.append("''")
+                index += 2
+                continue
+            quoted = not quoted
+            buf.append(char)
+        elif char == "," and not quoted:
+            piece = "".join(buf).strip()
+            if piece:
+                parts.append(piece)
+            buf = []
+        else:
+            buf.append(char)
+        index += 1
+    tail = "".join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _sheet_and_cells(piece: str) -> tuple[str, str]:
+    piece = piece.strip()
+    quoted = _QUOTED_SHEET.match(piece)
+    if quoted:
+        return quoted.group("name").replace("''", "'"), quoted.group("cells").strip()
+    if "!" in piece:
+        sheet, cells = piece.rsplit("!", 1)
+        return sheet.strip(), cells.strip()
+    return "", piece
+
+
+def _bounds(cells: str, ws: Worksheet) -> tuple[int, int, int, int] | None:
+    cells = cells.replace("$", "").strip()
+    if not cells or cells.startswith("#"):
+        return None
+    try:
+        min_col, min_row, max_col, max_row = range_boundaries(cells)
+    except ValueError:
+        return None
+    if min_col is None:
+        min_col = 1
+    if max_col is None:
+        max_col = ws.max_column or min_col
+    if min_row is None:
+        min_row = 1
+    if max_row is None:
+        max_row = ws.max_row or min_row
+    if min_col > max_col or min_row > max_row:
+        return None
+    return min_col, min_row, max_col, max_row
+
+
+def _ranges_from_formula(raw: str, ws: Worksheet, owner: str) -> list[tuple[int, int, int, int]]:
     ranges = []
-    for piece in raw.split(","):
-        piece = piece.strip()
-        if "!" in piece:
-            piece = piece.rsplit("!", 1)[-1]
-        piece = piece.replace("$", "").strip().strip("'")
-        if not piece:
+    for piece in _split_union(raw.strip().lstrip("=")):
+        sheet, cells = _sheet_and_cells(piece)
+        if sheet and sheet.casefold() != owner.casefold():
             continue
-        try:
-            min_col, min_row, max_col, max_row = range_boundaries(piece)
-        except ValueError:
-            continue
-        ranges.append((min_col, min_row, max_col, max_row))
+        area = _bounds(cells, ws)
+        if area is not None:
+            ranges.append(area)
     return ranges
 
 

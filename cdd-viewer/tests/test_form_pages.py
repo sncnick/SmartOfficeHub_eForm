@@ -1,11 +1,14 @@
+import tempfile
 import unittest
+import zipfile
 from io import BytesIO
+from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 from openpyxl.worksheet.pagebreak import Break
 
-from app.form_pages import page_ranges, split_form_pages
+from app.form_pages import page_ranges, split_form_pages, split_workbook_bytes
 
 
 class FormPageTests(unittest.TestCase):
@@ -121,6 +124,80 @@ class FormPageTests(unittest.TestCase):
 
         self.assertEqual(output["CDD"]["B1"].value, "")
         self.assertEqual(output["CDD"]["B1"].comment.text, "引用：A1")
+
+    def test_a_manual_break_inside_one_of_several_print_areas_adds_a_page(self):
+        book = Workbook()
+        form = book.active
+        form.title = "CDD"
+        form["A1"] = "第一範圍"
+        form["A5"] = "第二範圍上"
+        form["A9"] = "第二範圍下"
+        form.print_area = "A1:B4,A5:B12"
+        form.row_breaks.append(Break(id=8))
+
+        output = split_form_pages(book)
+
+        self.assertEqual(output.sheetnames, ["CDD-P1", "CDD-P2", "CDD-P3"])
+        self.assertEqual(output["CDD-P1"]["A1"].value, "第一範圍")
+        self.assertEqual(output["CDD-P2"]["A1"].value, "第二範圍上")
+        self.assertEqual(output["CDD-P3"]["A1"].value, "第二範圍下")
+
+    def test_manual_breaks_split_a_sheet_without_a_print_area(self):
+        book = Workbook()
+        form = book.active
+        form.title = "CDD"
+        form["A1"] = "上半"
+        form["A8"] = "下半"
+        form.row_breaks.append(Break(id=4))
+
+        output = split_form_pages(book)
+
+        self.assertEqual(output.sheetnames, ["CDD-P1", "CDD-P2"])
+        self.assertEqual(output["CDD-P1"]["A1"].value, "上半")
+        self.assertEqual(output["CDD-P2"]["A4"].value, "下半")
+
+    def test_a_comma_in_the_sheet_name_keeps_every_print_area(self):
+        book = Workbook()
+        form = book.active
+        form.title = "Foo, Bar"
+        ranges = page_ranges(form, "'Foo, Bar'!$A$1:$B$2,'Foo, Bar'!$A$3:$B$4")
+        self.assertEqual(ranges, [(1, 1, 2, 2), (1, 3, 2, 4)])
+
+    def test_a_whole_column_range_does_not_drop_the_other_pages(self):
+        book = Workbook()
+        form = book.active
+        form.title = "CDD"
+        form["B4"] = "欄"
+        ranges = page_ranges(form, "'CDD'!$A:$B,'CDD'!$D$1:$E$2")
+        self.assertEqual(ranges, [(1, 1, 2, 4), (4, 1, 5, 2)])
+
+    def test_a_print_area_openpyxl_drops_is_still_split(self):
+        book = Workbook()
+        form = book.active
+        form.title = "CDD"
+        form["A1"] = "上"
+        form["A5"] = "下"
+        form.print_area = "A1:B2"
+        buffer = BytesIO()
+        book.save(buffer)
+        packed = zipfile.ZipFile(BytesIO(buffer.getvalue()))
+        files = {name: packed.read(name) for name in packed.namelist()}
+        workbook = files["xl/workbook.xml"].decode("utf-8")
+        workbook = workbook.replace("$A$1:$B$2", "$A:$B,'CDD'!$A$5:$B$6", 1)
+        files["xl/workbook.xml"] = workbook.encode("utf-8")
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "form.xlsx"
+            with zipfile.ZipFile(path, "w") as target:
+                for name, data in files.items():
+                    target.writestr(name, data)
+            saved = load_workbook(path)
+            self.assertFalse(str(saved["CDD"].print_area or "").strip())
+            saved.close()
+            output = load_workbook(BytesIO(split_workbook_bytes(path)))
+        self.assertEqual(output.sheetnames, ["CDD-P1", "CDD-P2"])
+        self.assertEqual(output["CDD-P1"]["A1"].value, "上")
+        self.assertEqual(output["CDD-P2"]["A1"].value, "下")
+        output.close()
 
     def test_page_ranges_follow_the_print_area_order(self):
         book = Workbook()
