@@ -7,24 +7,40 @@ as a web page, so the top of the page is not sliced onto another sheet.
 
 from __future__ import annotations
 
+import re
+import tempfile
+import threading
 import time
 import uuid
 from io import BytesIO
 from pathlib import Path
 
 from fpdf import FPDF
-from pypdf import PdfReader, PdfWriter, Transformation
+from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfReadError
-from pypdf.generic import NameObject
+from pypdf.generic import (
+    ArrayObject,
+    BooleanObject,
+    DecodedStreamObject,
+    DictionaryObject,
+    NameObject,
+    NumberObject,
+    RectangleObject,
+    create_string_object,
+)
 
 from .pdf_preview import PdfPreviewError, iter_widgets, preview_pdf
 
 _JOBS: dict[str, tuple[float, bytes]] = {}
 _JOB_SECONDS = 120
 _CHECKED = {"☑", "✓", "✔", "yes", "true", "1"}
+_FONT_LOCK = threading.Lock()
+_FONT_FACE: Path | None = None
+# Noto CJK here is a CFF collection. Putting it in FontFile2 makes viewers draw
+# the wrong glyphs until the field is edited and rebuilt from the real value.
 _FONTS = (
-    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-    Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/arphic/uming.ttc"),
+    Path("/usr/share/fonts/truetype/arphic/ukai.ttc"),
     Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
     Path("/System/Library/Fonts/Supplemental/Songti.ttc"),
     Path("/System/Library/Fonts/PingFang.ttc"),
@@ -48,8 +64,7 @@ def compose_pdf(source: str | Path | bytes, fields: list) -> bytes:
             raise PdfPreviewError("這份 PDF 有密碼，無法預覽")
     laid = preview_pdf(raw)
     wanted = _clean_fields(fields)
-    writer = PdfWriter()
-    writer.append(reader)
+    writer = PdfWriter(clone_from=reader)
     for index, page in enumerate(writer.pages):
         number = index + 1
         specs = laid["pages"][index]["fields"] if index < len(laid["pages"]) else []
@@ -68,8 +83,10 @@ def compose_pdf(source: str | Path | bytes, fields: list) -> bytes:
             stamped = dict(spec)
             stamped["_size"] = wanted.get((number, f"{spec['id']}:size"))
             texts.append((stamped, value))
+            _show_widget_text(writer, widget, value, stamped.get("_size"))
         if texts:
-            _stamp(page, texts)
+            _stamp(writer, page, texts)
+    _keep_appearances(writer)
     out = BytesIO()
     writer.write(out)
     return out.getvalue()
@@ -110,8 +127,10 @@ def _clean_fields(fields: list) -> dict[tuple[int, str], str]:
         except (TypeError, ValueError):
             continue
         ident = str(item.get("id") or "")
-        text = str(item.get("text") or "").replace("\r", " ").replace("\n", " ").strip()
-        if page < 1 or not ident.startswith("pdf-") or not text:
+        raw = str(item.get("text") or "").replace("\r\n", "\n").replace("\r", "\n")
+        lines = raw.split("\n")
+        text = lines[0].strip() if len(lines) == 1 else "\n".join(line.strip() for line in lines)
+        if page < 1 or not ident.startswith("pdf-") or not text.strip():
             continue
         found[(page, ident)] = text[:500]
         size = item.get("size")
@@ -120,6 +139,92 @@ def _clean_fields(fields: list) -> dict[tuple[int, str], str]:
         except (TypeError, ValueError):
             pass
     return found
+
+
+def _color_before_text(data: bytes) -> bytes:
+    """fpdf sets the fill color inside BT/ET. Preview then keeps the text copyable but does not paint it."""
+    pattern = re.compile(
+        rb"BT(\s+[-\d.]+\s+[-\d.]+\s+Td)(\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+rg)",
+    )
+    return pattern.sub(rb"\2 BT\1", data)
+
+
+def _show_widget_text(writer: PdfWriter, widget, text: str, requested) -> None:
+    rect = widget.get("/Rect")
+    if rect is None:
+        return
+    box = [float(item) for item in rect]
+    width = abs(box[2] - box[0])
+    height = abs(box[3] - box[1])
+    if width < 2 or height < 2:
+        return
+    pdf = FPDF(unit="pt", format=(max(width, 4), max(height, 4)))
+    pdf.set_auto_page_break(auto=False)
+    pdf.set_margin(0)
+    pdf.add_page()
+    font = _font_file()
+    pdf.add_font("Noto", fname=str(font))
+    pdf.set_text_color(17, 17, 17)
+    lines = text.split("\n") or [""]
+    line_h = height / len(lines)
+    pdf.set_font("Noto", size=max(4, min(line_h * 0.8, 18)))
+    size = _font_size(pdf, max(lines, key=len), max(1, width - 4), line_h, None if len(lines) > 1 else requested)
+    pdf.set_font("Noto", size=size)
+    for index, line in enumerate(lines):
+        pdf.text(2, (index + 0.8) * line_h, line)
+    overlay = PdfReader(stream=BytesIO(pdf.output())).pages[0]
+    cloned = overlay.clone(writer)
+    contents = cloned.get_contents()
+    data = b"" if contents is None else _color_before_text(contents.get_data())
+    resources = cloned.get("/Resources")
+    data = _isolate_font(resources, data)
+    form = DecodedStreamObject()
+    form.set_data(data)
+    form[NameObject("/Type")] = NameObject("/XObject")
+    form[NameObject("/Subtype")] = NameObject("/Form")
+    form[NameObject("/FormType")] = NumberObject(1)
+    form[NameObject("/BBox")] = RectangleObject([0, 0, width, height])
+    if resources is not None:
+        form[NameObject("/Resources")] = resources
+    widget[NameObject("/AP")] = DictionaryObject({NameObject("/N"): writer._add_object(form)})
+    widget[NameObject("/V")] = create_string_object(text)
+
+
+def _widget_key(obj):
+    ref = getattr(obj, "indirect_reference", None)
+    if ref is not None:
+        return (ref.idnum, ref.generation)
+    return id(obj)
+
+
+def _without_widget(items, widget):
+    target = _widget_key(widget)
+    kept = ArrayObject()
+    for item in list(items):
+        try:
+            same = _widget_key(item) == target or _widget_key(item.get_object()) == target
+        except Exception:
+            same = False
+        if not same:
+            kept.append(item)
+    return kept
+
+
+def _retire_text_widget(writer: PdfWriter, page, widget) -> None:
+    """Remove the empty field box so it cannot cover the text drawn on the page."""
+    annots = page.get("/Annots")
+    if annots is not None:
+        page[NameObject("/Annots")] = _without_widget(annots.get_object(), widget)
+    try:
+        form = writer._root_object.get("/AcroForm")
+        if form is None:
+            return
+        form = form.get_object()
+        fields = form.get("/Fields")
+        if fields is not None:
+            form[NameObject("/Fields")] = _without_widget(fields.get_object(), widget)
+    except Exception:
+        return
 
 
 def _set_check(widget, checked: bool) -> None:
@@ -149,7 +254,7 @@ def _on_state(widget):
     return NameObject("/Yes")
 
 
-def _stamp(page, texts: list[tuple[dict, str]]) -> None:
+def _stamp(writer: PdfWriter, page, texts: list[tuple[dict, str]]) -> None:
     media = page.mediabox
     left = float(media.left)
     bottom = float(media.bottom)
@@ -177,16 +282,75 @@ def _stamp(page, texts: list[tuple[dict, str]]) -> None:
         user_top = user_bottom + user_h
         draw_x = user_x - left
         draw_y = (bottom + height) - user_top
-        size = _font_size(pdf, text, user_w, user_h, spec.get("_size"))
+        lines = text.split("\n")
+        measure = max(lines, key=len) if len(lines) > 1 else text
+        line_h = user_h / len(lines) if len(lines) > 1 else user_h
+        size = _font_size(pdf, measure, user_w, line_h, None if len(lines) > 1 else spec.get("_size"))
         pdf.set_font("Noto", size=size)
-        pdf.set_xy(draw_x, draw_y)
-        pdf.cell(w=max(user_w, 1), h=max(user_h, 1), text=text, align="L")
-    overlay = PdfReader(stream=BytesIO(pdf.output()))
-    page.merge_transformed_page(
-        overlay.pages[0],
-        Transformation().translate(left, bottom),
-        expand=False,
-    )
+        _draw_text(pdf, text, draw_x, draw_y, user_w, user_h)
+    overlay = PdfReader(stream=BytesIO(pdf.output())).pages[0]
+    _attach_overlay(writer, page, overlay, left, bottom)
+
+
+def _attach_overlay(writer: PdfWriter, page, overlay, left: float, bottom: float) -> None:
+    """Draw the overlay as its own form so the page's original fonts stay untouched."""
+    cloned = overlay.clone(writer)
+    contents = cloned.get_contents()
+    data = b"" if contents is None else _color_before_text(contents.get_data())
+    resources = cloned.get("/Resources")
+    data = _isolate_font(resources, data)
+    form = DecodedStreamObject()
+    form.set_data(data)
+    form[NameObject("/Type")] = NameObject("/XObject")
+    form[NameObject("/Subtype")] = NameObject("/Form")
+    form[NameObject("/FormType")] = NumberObject(1)
+    form[NameObject("/BBox")] = overlay.mediabox
+    if resources is not None:
+        form[NameObject("/Resources")] = resources
+    form_ref = writer._add_object(form)
+    page_resources = page.get("/Resources")
+    if page_resources is None:
+        page_resources = DictionaryObject()
+        page[NameObject("/Resources")] = page_resources
+    else:
+        page_resources = page_resources.get_object()
+    xobjects = page_resources.get("/XObject")
+    if xobjects is None:
+        xobjects = DictionaryObject()
+        page_resources[NameObject("/XObject")] = xobjects
+    else:
+        xobjects = xobjects.get_object()
+    name = "/CDDFill"
+    index = 0
+    while NameObject(name) in xobjects:
+        index += 1
+        name = f"/CDDFill{index}"
+    xobjects[NameObject(name)] = form_ref
+    piece = f"q\n1 0 0 1 {left:.4f} {bottom:.4f} cm\n{name} Do\nQ\n".encode()
+    extra = DecodedStreamObject()
+    extra.set_data(piece)
+    extra_ref = writer._add_object(extra)
+    current = page.get("/Contents")
+    if current is None:
+        page[NameObject("/Contents")] = extra_ref
+        return
+    current_obj = current.get_object()
+    if isinstance(current_obj, ArrayObject):
+        current_obj.append(extra_ref)
+        return
+    page[NameObject("/Contents")] = ArrayObject([current, extra_ref])
+
+
+def _draw_text(pdf: FPDF, text: str, x: float, y: float, width: float, height: float) -> None:
+    lines = text.split("\n")
+    if len(lines) == 1:
+        pdf.set_xy(x, y)
+        pdf.cell(w=max(width, 1), h=max(height, 1), text=text, align="L")
+        return
+    line_h = max(height, 1) / len(lines)
+    for index, line in enumerate(lines):
+        pdf.set_xy(x, y + index * line_h)
+        pdf.cell(w=max(width, 1), h=line_h, text=line, align="L")
 
 
 def _font_size(pdf: FPDF, text: str, width: float, height: float, requested) -> float:
@@ -228,8 +392,109 @@ def _from_top_left(x: float, y: float, crop_w: float, crop_h: float, rotation: i
     return x, crop_h - y
 
 
+def _keep_appearances(writer: PdfWriter) -> None:
+    """The appearance we drew is the one to show. Regenerating it uses the form's old font and garbles the text."""
+    try:
+        form = writer._root_object.get("/AcroForm")
+    except Exception:
+        return
+    if form is None:
+        return
+    try:
+        form.get_object()[NameObject("/NeedAppearances")] = BooleanObject(False)
+    except Exception:
+        return
+
+
+def _isolate_font(resources, data: bytes) -> bytes:
+    """Keep the fill font off the page's /F1, which is a different encoding."""
+    if resources is None or not data:
+        return data
+    try:
+        fonts = resources.get_object().get("/Font")
+        if fonts is None:
+            return data
+        fonts = fonts.get_object()
+    except Exception:
+        return data
+    renamed = data
+    for key in list(fonts.keys()):
+        token = str(key)
+        if not token.startswith("/F"):
+            continue
+        unique = "/CDD" + token[1:]
+        fonts[NameObject(unique)] = fonts[key]
+        del fonts[key]
+        renamed = re.sub(
+            rb"%s(?![0-9A-Za-z])" % re.escape(token.encode("ascii")),
+            unique.encode("ascii"),
+            renamed,
+        )
+    return renamed
+
+
+def _family_name(font) -> str:
+    for rec in font["name"].names:
+        if rec.nameID != 1:
+            continue
+        try:
+            return rec.toUnicode()
+        except Exception:
+            continue
+    return ""
+
+
+def _font_rank(name: str) -> int:
+    if " HK" in name:
+        return 0
+    if " TW" in name:
+        return 1
+    return 2
+
+
+def _glyf_face(path: Path) -> Path | None:
+    from fontTools.ttLib import TTCollection, TTFont
+
+    suffix = path.suffix.lower()
+    if suffix in {".ttc", ".otc"}:
+        collection = TTCollection(str(path))
+        chosen = None
+        rank = 99
+        for font in collection.fonts:
+            if "glyf" not in font:
+                continue
+            name = _family_name(font)
+            score = _font_rank(name)
+            if chosen is None or score < rank:
+                chosen = font
+                rank = score
+        if chosen is None:
+            return None
+        dest = Path(tempfile.gettempdir()) / f"cdd-glyf-v2-{path.stem}.ttf"
+        if not dest.is_file() or dest.stat().st_size < 1000:
+            temporary = dest.with_suffix(".tmp")
+            chosen.save(temporary)
+            temporary.replace(dest)
+        return dest
+    font = TTFont(str(path), lazy=True)
+    if "glyf" not in font:
+        return None
+    return path
+
+
 def _font_file() -> Path:
-    for path in _FONTS:
-        if path.is_file():
-            return path
+    global _FONT_FACE
+    with _FONT_LOCK:
+        if _FONT_FACE is not None and _FONT_FACE.is_file():
+            return _FONT_FACE
+        for path in _FONTS:
+            if not path.is_file():
+                continue
+            try:
+                face = _glyf_face(path)
+            except Exception:
+                continue
+            if face is not None:
+                _FONT_FACE = face
+                return face
     raise PdfPreviewError("無法準備這份 PDF")

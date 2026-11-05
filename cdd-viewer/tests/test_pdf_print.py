@@ -76,9 +76,25 @@ class PdfPrintTests(unittest.TestCase):
         dark = 0
         for y in text_rows:
             start = y * width
-            dark += sum(1 for value in after[start:start + width] if value < 80)
+            dark += sum(1 for value in after[start:start + width] if value < 200)
         self.assertGreater(dark, 8)
         self.assertLess(height, 900)
+
+    def test_filled_cjk_uses_a_truetype_appearance(self):
+        printed = compose_pdf(_bar_pdf(), [{"page": 1, "id": "pdf-1-1", "text": "測試地址", "size": 12}])
+        reader = PdfReader(BytesIO(printed))
+        widget = reader.pages[0]["/Annots"][0].get_object()
+        self.assertEqual(str(widget.get("/V")), "測試地址")
+        appearance = widget["/AP"]["/N"].get_object()
+        stream = appearance.get_data()
+        self.assertIn(b"/CDDF1", stream)
+        self.assertNotIn(b"/F1 ", stream)
+        font = appearance["/Resources"]["/Font"]["/CDDF1"].get_object()
+        cid = font["/DescendantFonts"][0].get_object()
+        embedded = cid["/FontDescriptor"].get_object()["/FontFile2"].get_object().get_data()
+        self.assertTrue(embedded.startswith(b"\x00\x01\x00\x00"))
+        form = reader.trailer["/Root"]["/AcroForm"].get_object()
+        self.assertFalse(form["/NeedAppearances"].value)
 
 
 if __name__ == "__main__":

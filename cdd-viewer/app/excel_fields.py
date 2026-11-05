@@ -100,14 +100,24 @@ _TYPE_OPTIONS = (
 )
 
 
+_ADDRESS_PARTS = ("室/樓/座等", "大廈", "街道/屋苑/地段/村等", "區")
+
+
+def _address_label(owner: str, number: str) -> str:
+    meaning = _ADDRESS_PARTS[int(number) - 1]
+    return f"{owner} 地址 {number} - {meaning}"
+
+
 def _pack(key: str, label: str, kind: str = "text", options=()) -> dict:
     return {"key": key, "label": label, "kind": kind, "options": [dict(item) for item in options]}
 
 
 def _address(owner: str, field: str, *, dates: str) -> dict | None:
+    if field == "address" and owner == "RO":
+        return _pack("RO.address", "RO 整段地址")
     line = re.fullmatch(r"address\.([1-4])", field)
     if line:
-        return _pack(f"{owner}.address.{line.group(1)}", f"{owner} 地址 {line.group(1)}")
+        return _pack(f"{owner}.address.{line.group(1)}", _address_label(owner, line.group(1)))
     if dates == "short" and field in {"from", "address.from"}:
         return _pack(f"{owner}.from", f"{owner} 開始日期", "date")
     if dates == "short" and field in {"to", "address.to"}:
@@ -390,7 +400,7 @@ def _fields_for(owner: str) -> list[dict]:
         )]
         group = "公司"
     elif canon == "RO":
-        keys = [f"RO.{key}" for key in ("address.1", "address.2", "address.3", "address.4", "from", "to")]
+        keys = [f"RO.{key}" for key in ("address", "address.1", "address.2", "address.3", "address.4", "from", "to")]
         group = "註冊地址"
     elif canon == "SHARES":
         keys = [f"shares.{key}" for key in _CAPITAL]

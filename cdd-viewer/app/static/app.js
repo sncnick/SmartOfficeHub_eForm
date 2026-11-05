@@ -397,6 +397,13 @@ function listField(label, items, cls = '', issues = [], pathBase = '', extraBlan
   return `<div class="field ${cls}${mark.cls}"${locsFrom(issues)}><label>${esc(label)}</label>${body}${mark.html}</div>`;
 }
 
+const ADDRESS_LINE_LABELS = [
+  '地址 1 - 室/樓/座等',
+  '地址 2 - 大廈',
+  '地址 3 - 街道/屋苑/地段/村等',
+  '地址 4 - 區',
+];
+
 function addressLines(item) {
   if (Array.isArray(item?.lines) && item.lines.length === 4) return item.lines;
   const parts = String(item?.address || item?.value || '')
@@ -408,7 +415,7 @@ function addressLines(item) {
 
 function addressGrid(item, fromIssues = [], toIssues = [], pathBase = '', showBadge = true) {
   const lines = item ? addressLines(item) : ['', '', '', ''];
-  const names = ['地址 1', '地址 2', '地址 3', '地址 4'];
+  const names = ADDRESS_LINE_LABELS;
   const row = item?.row;
   const aliasRows = (item?.alias_rows || []).filter((alias) => alias != null && alias !== row);
   const aliasIssues = aliasRows.flatMap((alias) => ['item', 'address.from', 'address.to',
@@ -419,7 +426,7 @@ function addressGrid(item, fromIssues = [], toIssues = [], pathBase = '', showBa
   const badge = showBadge && item?.outdated && !render.inOutdated ? `<div class="addr-flag">${outdatedBadge(item)}</div>` : '';
   const lineIssues = (index) => (row == null ? [] : issuesAt(`address.line.${index + 1}`, row));
   const linePath = (index) => (pathBase ? `${pathBase}/lines/${index}` : '');
-  const boxes = names.map((name, index) => field(name, lines[index], '', lineIssues(index), linePath(index))).join('')
+  const boxes = names.map((name, index) => field(name, lines[index], 'addr-line', lineIssues(index), linePath(index))).join('')
     + field('開始日期', fmtDate(item?.from), '', fromAll, pathBase ? `${pathBase}/from` : '')
     + field('結束日期', fmtDate(item?.to), '', toAll, pathBase ? `${pathBase}/to` : '');
   const itemIssues = row == null ? [] : issuesAt('item', row);
@@ -549,6 +556,13 @@ function table(headers, currentRows, outdatedRows = [], cls = '') {
 
 // ---------------------------------------------------------------- company sections
 
+function addressStack(item, base) {
+  const lines = addressLines(item);
+  return `<div class="addr-stack">${ADDRESS_LINE_LABELS.map((label, index) => (
+    `<label class="addr-stack-line"><span>${esc(label)}</span>${cellInput(lines[index], base ? `${base}/lines/${index}` : '')}</label>`
+  )).join('')}</div>`;
+}
+
 function branchRow(b) {
   const label = issuesAt('branch.label', b.row);
   const from = issuesAt('branch.from', b.row);
@@ -558,12 +572,12 @@ function branchRow(b) {
   return `
     <tr class="${b.outdated ? 'outdated' : ''}"${rowAttr(b.row)}>
       ${cell(`${cellInput(b.label, base ? `${base}/label` : '')}${note}`, label)}
-      ${addressLines(b).map((line, index) => `<td>${cellInput(line, base ? `${base}/lines/${index}` : '')}</td>`).join('')}
+      <td>${addressStack(b, base)}</td>
       <td>${cellInput(b.br_no, base ? `${base}/br_no` : '')}</td>
       <td>${boxed(cellInput(fmtDate(b.from), base ? `${base}/from` : ''), from)}</td>
       <td>${boxed(cellInput(fmtDate(b.to), base ? `${base}/to` : ''), to)}</td>
       ${cell(stateBadge(b))}<td class="muted">${b.row ?? ''}</td>
-    </tr>${issueRow([...label, ...from, ...to], 10)}`;
+    </tr>${issueRow([...label, ...from, ...to], 7)}`;
 }
 
 function companyTypeTicks(general) {
@@ -606,7 +620,7 @@ function generalSection(c) {
     <h4>分行</h4>
     ${addRecordBox('BR', '新增分行', `${textInput('編號', 'label', '', '', '例如 BR001')}${addressInputs()}${textInput('BR', 'br_no')}${textInput('開始日期', 'from')}${textInput('結束日期', 'to')}`)}
     ${c.branches.length
-    ? table(['標籤', '地址 1', '地址 2', '地址 3', '地址 4', 'BR', '開始日期', '結束日期', '狀態', 'Excel 行'],
+    ? table(['標籤', '地址', 'BR', '開始日期', '結束日期', '狀態', 'Excel 行'],
       branches.current.map(branchRow), branches.outdated.map(branchRow))
     : ''}`;
   return section('公司資料 General', body, `Excel 第 ${c.row} 行`, rowAttr(c.row));
@@ -1076,8 +1090,7 @@ function textInput(label, name, cls = '', value = '', placeholder = '') {
 }
 
 function addressInputs() {
-  return ['地址 1', '地址 2', '地址 3', '地址 4']
-    .map((label, index) => textInput(label, `line${index + 1}`, index === 0 ? 'span-2' : '')).join('');
+  return ADDRESS_LINE_LABELS.map((label, index) => textInput(label, `line${index + 1}`, 'span-3')).join('');
 }
 
 function addRecordBox(kind, title, inner, attrs = '') {
@@ -1117,10 +1130,7 @@ function addPartyBox(key) {
         <div class="field"><label>委任日期</label><input name="appoint_date" autocomplete="off"></div>
         <div class="field"><label>辭任日期</label><input name="resign_date" autocomplete="off"></div>
         <div class="field spacer"></div>
-        <div class="field span-2"><label>地址 1</label><input name="line1" autocomplete="off"></div>
-        <div class="field"><label>地址 2</label><input name="line2" autocomplete="off"></div>
-        <div class="field"><label>地址 3</label><input name="line3" autocomplete="off"></div>
-        <div class="field"><label>地址 4</label><input name="line4" autocomplete="off"></div>
+        ${ADDRESS_LINE_LABELS.map((label, index) => `<div class="field span-3"><label>${esc(label)}</label><input name="line${index + 1}" autocomplete="off"></div>`).join('')}
         ${shares}
         ${ubo}
         ${license}
@@ -2065,17 +2075,17 @@ function fieldsForOwner(owner) {
     ));
   }
   if (canon === 'RO') {
-    return [1, 2, 3, 4].map((line) => excelSpec(`RO.address.${line}`, `RO 地址 ${line}`, 'text', [], '註冊地址'))
-      .concat([
-        excelSpec('RO.from', 'RO 開始日期', 'date', [], '註冊地址'),
-        excelSpec('RO.to', 'RO 結束日期', 'date', [], '註冊地址'),
-      ]);
+    const lines = ADDRESS_LINE_LABELS.map((label, index) => excelSpec(`RO.address.${index + 1}`, `RO ${label}`, 'text', [], '註冊地址'));
+    return [excelSpec('RO.address', 'RO 整段地址', 'text', [], '註冊地址')].concat(lines, [
+      excelSpec('RO.from', 'RO 開始日期', 'date', [], '註冊地址'),
+      excelSpec('RO.to', 'RO 結束日期', 'date', [], '註冊地址'),
+    ]);
   }
   if (canon === 'SHARES') {
     return EXCEL_CAPITAL_FIELDS.map(([key, label, kind]) => excelSpec(`SHARES.${key}`, `股本 ${label}`, kind, [], '股本'));
   }
   if (canon.startsWith('BR')) {
-    return [1, 2, 3, 4].map((line) => excelSpec(`${canon}.address.${line}`, `${canon} 地址 ${line}`, 'text', [], '分行'))
+    return [1, 2, 3, 4].map((line) => excelSpec(`${canon}.address.${line}`, `${canon} ${ADDRESS_LINE_LABELS[line - 1]}`, 'text', [], '分行'))
       .concat([
         excelSpec(`${canon}.from`, `${canon} 開始日期`, 'date', [], '分行'),
         excelSpec(`${canon}.to`, `${canon} 結束日期`, 'date', [], '分行'),
@@ -2085,7 +2095,7 @@ function fieldsForOwner(owner) {
   const basic = EXCEL_BASIC_FIELDS.map(([key, label, kind]) => excelSpec(
     `${canon}.${key}`, `${canon} ${label}`, kind, kind === 'choice' ? EXCEL_ID_OPTIONS : [], '人物',
   ));
-  const address = [1, 2, 3, 4].map((line) => excelSpec(`${canon}.address.${line}`, `${canon} 地址 ${line}`, 'text', [], '人物'))
+  const address = [1, 2, 3, 4].map((line) => excelSpec(`${canon}.address.${line}`, `${canon} ${ADDRESS_LINE_LABELS[line - 1]}`, 'text', [], '人物'))
     .concat([
       excelSpec(`${canon}.address.from`, `${canon} 地址開始日期`, 'date', [], '人物'),
       excelSpec(`${canon}.address.to`, `${canon} 地址結束日期`, 'date', [], '人物'),
@@ -2267,6 +2277,9 @@ function companyFieldText(key, company = selectedCompany()) {
     const field = key.slice(3);
     const line = field.match(/^address\.([1-4])$/);
     if (line) return addressLine(office, Number(line[1]) - 1);
+    if (field === 'address') {
+      return [0, 1, 2, 3].map((index) => String(addressLine(office, index) || '').trim()).join('\n');
+    }
     if (field === 'from' || field === 'to') return showFieldValue(office?.[field]);
     return '';
   }
@@ -2822,7 +2835,8 @@ function excelTick(field) {
 function excelInlineValue(field) {
   const name = field.group ? `${field.group} · ${field.label}` : field.label;
   const text = companyFieldText(field.key);
-  return `<span class="excel-live excel-inline-value${text ? '' : ' empty'}" data-excel-field="${esc(field.key)}" title="${esc(name)}">${esc(text)}</span>`;
+  const pre = /[\r\n]/.test(text) ? ' pre' : '';
+  return `<span class="excel-live excel-inline-value${text ? '' : ' empty'}${pre}" data-excel-field="${esc(field.key)}" title="${esc(name)}">${breakHtml(text)}</span>`;
 }
 
 function resolveInlineField(token) {
@@ -2913,7 +2927,7 @@ function excelInlineHtml(parts) {
   if (!parts || !parts.length) return '';
   return `<span class="excel-inline">${parts.map((part) => {
     if (part.tick) return excelBareTick(part.checked);
-    if (part.field && excelForm) return part.field.kind === 'bool' ? excelFormControl(part.field) : `<span class="excel-filled">${esc(companyFieldText(part.field.key))}</span>`;
+    if (part.field && excelForm) return part.field.kind === 'bool' ? excelFormControl(part.field) : filledSpan(companyFieldText(part.field.key));
     if (part.field) return part.field.kind === 'bool' ? excelTick(part.field) : excelInlineValue(part.field);
     if (part.pick) return excelForm ? '' : excelPickControl([]);
     return esc(stripTickMarks(part.text));
@@ -2927,20 +2941,32 @@ function excelMappedFieldsHtml(fields, browserScope) {
     const name = field.group ? `${field.group} · ${field.label}` : field.label;
     if (field.kind === 'bool') return excelTick(field);
     const text = companyFieldText(field.key);
+    const pre = /[\r\n]/.test(text) ? ' pre' : '';
     return text
-      ? `<span class="excel-live excel-inline-value" data-excel-field="${esc(field.key)}" title="${esc(name)}">${esc(text)}</span>`
+      ? `<span class="excel-live excel-inline-value${pre}" data-excel-field="${esc(field.key)}" title="${esc(name)}">${breakHtml(text)}</span>`
       : '';
   }).filter(Boolean);
   return `<span class="excel-inline excel-multi" data-browser-scope="${esc(browserScope || 'cell')}">${bits.join('<span class="excel-multi-gap">、</span>')}</span>`;
+}
+
+function breakHtml(text) {
+  return esc(text).replace(/\r\n|\r|\n/g, '<br>');
+}
+
+function filledSpan(text) {
+  const value = String(text || '');
+  if (!value) return '';
+  const pre = /[\r\n]/.test(value) ? ' pre' : '';
+  return `<span class="excel-filled${pre}">${breakHtml(value)}</span>`;
 }
 
 function excelFormFieldsHtml(fields) {
   const list = (fields || []).filter(usableExcelMap);
   return `<span class="excel-inline excel-multi">${list.map((field) => {
     if (field.kind === 'bool') return excelFormControl(field);
-    if (field.kind === 'free') return field.text ? `<span class="excel-filled">${esc(field.text)}</span>` : '';
+    if (field.kind === 'free') return field.text ? filledSpan(field.text) : '';
     const text = companyFieldText(field.key);
-    return text ? `<span class="excel-filled">${esc(text)}</span>` : '';
+    return filledSpan(text);
   }).filter(Boolean).join('<span class="excel-multi-gap">、</span>')}</span>`;
 }
 
@@ -2950,7 +2976,8 @@ function excelMappedControl(field, browserScope) {
   const name = field.group ? `${field.group} · ${field.label}` : field.label;
   const text = companyFieldText(field.key);
   const scope = browserScope ? ` data-browser-scope="${esc(browserScope)}"` : ' data-excel-remap="1"';
-  return `<button type="button" class="excel-live excel-live-solo${text ? '' : ' empty'}"${scope} data-excel-field="${esc(field.key)}" title="對應：${esc(name)}">${esc(text)}</button>`;
+  const pre = /[\r\n]/.test(text) ? ' pre' : '';
+  return `<button type="button" class="excel-live excel-live-solo${text ? '' : ' empty'}${pre}"${scope} data-excel-field="${esc(field.key)}" title="對應：${esc(name)}">${breakHtml(text)}</button>`;
 }
 
 function renderBrowserParts(source, marks) {
@@ -2964,7 +2991,7 @@ function renderBrowserParts(source, marks) {
     const name = mark.field ? (mark.field.group ? `${mark.field.group} · ${mark.field.label}` : mark.field.label) : '未對應欄位';
     if (excelForm && mark.field && mark.field.kind === 'bool') html += excelFormControl(mark.field);
     else if (excelForm && mark.field && mark.field.kind === 'free') html += freeTextInput(mark.field);
-    else if (excelForm && mark.field) html += `<span class="excel-filled">${esc(companyFieldText(mark.field.key))}</span>`;
+    else if (excelForm && mark.field) html += filledSpan(companyFieldText(mark.field.key));
     else if (excelForm) html += excelBareTick();
     else {
       const on = mark.field && mark.field.kind === 'bool' && fieldChecked(mark.field.key) ? ' checked' : '';
@@ -3145,7 +3172,7 @@ function renderExcelTable(data, options = {}) {
       else if (excelForm && partials.length) content = renderBrowserParts(value, partials);
       else if (excelForm && mapped && mapped.kind === 'free') content = freeTextInput(mapped);
       else if (excelForm && mapped && mapped.kind === 'bool') content = excelFormControl(mapped);
-      else if (excelForm && mapped) content = `<span class="excel-filled">${esc(companyFieldText(mapped.key))}</span>`;
+      else if (excelForm && mapped) content = filledSpan(companyFieldText(mapped.key));
       else if (excelForm && (whole || (field && field.kind === 'pick') || isUnmappedMark(row.cells[index] || ''))) content = '';
       else if (whole) content = usableExcelMap(whole.field) ? excelMappedControl(whole.field, 'cell') : excelPickControl(rowOwners, stripTickMarks(value).trim());
       else if (partials.length) content = renderBrowserParts(value, partials);
@@ -3296,6 +3323,7 @@ function fitExcelFrame(frame) {
   frame.style.setProperty('--pad-b', `${box.bottom}mm`);
   frame.style.setProperty('--pad-l', `${box.left}mm`);
   writeExcelFormPages();
+  fitFilledFields(frame);
 }
 
 function sheetPrintsAsOnePage(page) {
@@ -3580,7 +3608,7 @@ function wordFieldHtml(field) {
   const box = field.control === 'checkbox'
     ? `<input type="checkbox" tabindex="-1"${checked ? ' checked' : ''} aria-label="${esc(field.name || '欄位')}">`
     : '';
-  return `<span class="word-field" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${box}${esc(text)}</span>`;
+  return `<span class="word-field" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${box}${breakHtml(text)}</span>`;
 }
 
 function wordHitHtml(field, page) {
@@ -3605,10 +3633,11 @@ function wordHitHtml(field, page) {
     return `<button type="button" class="word-hit enter${cell ? " cell" : ""}" title="Enter" style="${place}" data-word-field="${esc(field.id)}" data-word-param="Enter" aria-label="Enter">${esc(glyph)}</button>`;
   }
   const hasContent = Boolean(String(value || '').trim());
+  const lineBreaks = /[\r\n]/.test(value);
   const pdfEmpty = excelForm && wordView.doc?.kind === 'pdf' && !hasContent;
   const shown = mapped?.kind === 'free'
     ? freeTextInput(mapped, field.id)
-    : (hasContent ? `<span class="word-hit-value">${esc(value)}</span>` : '');
+    : (hasContent ? `<span class="word-hit-value${lineBreaks ? ' pre' : ''}">${breakHtml(value)}</span>` : '');
   const pdf = wordView.doc?.kind === 'pdf' && hasContent && field.control !== 'checkbox' && mapped?.kind !== 'free';
   const size = Math.max(12, Math.min(field.h || 14, 18));
   const place = page
@@ -3621,8 +3650,8 @@ function wordHitHtml(field, page) {
         ? `left:${field.x}px;top:${field.y}px;min-width:${field.w || 12}px;min-height:${field.h || 14}px;width:max-content;height:auto;font-size:${size}px;line-height:${size}px`
         : `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`;
   const mode = locked
-    ? ` original${pdfEmpty ? ' form-empty' : ''}`
-    : `${field.blank ? ' blank' : ''}${hasContent ? ' filled' : ''}${mapped?.kind === 'free' ? ' free' : ''}${pdf ? ' pdf-fit' : ''}${excelForm && mapped && hasContent ? ' form-fill' : ''}${pdfEmpty ? ' form-empty' : ''}`;
+    ? ` original${pdfEmpty ? ' form-empty' : ''}${lineBreaks ? ' lines' : ''}`
+    : `${field.blank ? ' blank' : ''}${hasContent ? ' filled' : ''}${mapped?.kind === 'free' ? ' free' : ''}${pdf && !lineBreaks ? ' pdf-fit' : ''}${lineBreaks ? ' lines' : ''}${excelForm && mapped && hasContent ? ' form-fill' : ''}${pdfEmpty ? ' form-empty' : ''}`;
   const tags = (excelForm && mapped && (hasContent || pdfEmpty))
     ? formFillTags([mapped])
     : (pdfEmpty ? `<span class="form-fill-tag form-fill-tag-left">${esc(field.name || '未填欄位')}</span>` : '');
@@ -3712,13 +3741,101 @@ function applyLaidPrint(doc) {
   style.textContent = `@page { size: ${width}mm ${height}mm; margin: 0; }`;
 }
 
+function saveName(file, suffix) {
+  const stem = String(file || 'form').replace(/\.[^.]+$/, '');
+  return `${stem}-filled.${suffix}`;
+}
+
+function collectExcelFilled() {
+  return [...document.querySelectorAll('#excelScroll .excel-sheet-frame')].flatMap((frame) => {
+    const sheet = frame.dataset.sheet || '';
+    return [...frame.querySelectorAll('td[data-excel-row]')].map((td) => {
+      const shown = td.querySelector('.excel-filled, .form-free, .excel-form-field');
+      if (!shown) return null;
+      const text = shown.matches('input, textarea') ? shown.value : fieldNodeText(shown);
+      if (!String(text || '').trim()) return null;
+      return { sheet, row: Number(td.dataset.excelRow), col: td.dataset.excelCol, text };
+    }).filter(Boolean);
+  });
+}
+
+async function saveBytes(bytes, name, mime) {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const marker = new TextDecoder('latin1').decode(data.slice(0, 4));
+  const valid = mime.includes('pdf') ? marker.startsWith('%PDF') : marker.startsWith('PK');
+  if (!valid) throw new Error('bad-file');
+  if (window.showSaveFilePicker) {
+    const ext = `.${name.split('.').pop()}`;
+    const handle = await window.showSaveFilePicker({
+      suggestedName: name,
+      types: [{ description: ext.slice(1).toUpperCase(), accept: { [mime]: [ext] } }],
+    });
+    const writable = await handle.createWritable();
+    await writable.write(data);
+    await writable.close();
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([data], { type: mime }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function saveFilledFile() {
+  const note = document.querySelector('.excel-form-bar span');
+  const file = $('#excelFile').value;
+  try {
+    await excelFormReady;
+    if (wordView.doc?.kind === 'pdf') {
+      const prepared = await fetch('/api/pdf/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file, fields: pdfPrintFields() }),
+      });
+      if (!prepared.ok) throw new Error('save');
+      const payload = await prepared.json();
+      const stored = await fetch(`/api/pdf/print/${encodeURIComponent(payload.token)}`);
+      if (!stored.ok) throw new Error('save');
+      await saveBytes(await stored.arrayBuffer(), saveName(file, 'pdf'), 'application/pdf');
+    } else if (isWordFile(file)) {
+      if (note) note.textContent = 'Word 表格請用列印。另存目前可用於 PDF 和 Excel。';
+      return;
+    } else {
+      const response = await fetch('/api/excel/filled', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file, cells: collectExcelFilled() }),
+      });
+      if (!response.ok) throw new Error('save');
+      await saveBytes(await response.arrayBuffer(), saveName(file, 'xlsx'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    }
+    if (note) note.textContent = '已把填好的檔案存到你指定的位置。';
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;
+    if (note) note.textContent = '無法另存這份填好的檔案，請再按一次。';
+  }
+}
+
+function fieldNodeText(node) {
+  if (!node) return '';
+  let text = '';
+  node.childNodes.forEach((child) => {
+    if (child.nodeType === Node.TEXT_NODE) text += child.textContent || '';
+    else if (child.nodeName === 'BR') text += '\n';
+    else text += fieldNodeText(child);
+  });
+  return text;
+}
+
 function pdfPrintFields() {
   fitPdfFieldText();
   return [...document.querySelectorAll('#excelScroll .word-hit.filled, #excelScroll .word-hit.free')].map((node) => {
     const page = node.closest('[data-page]');
     const value = node.querySelector('.word-hit-value');
     const typed = node.querySelector('.form-free');
-    const text = typed ? typed.value : (value?.textContent || '');
+    const text = typed ? typed.value : fieldNodeText(value);
     if (!page || !text || !node.dataset.wordField) return null;
     const size = value ? parseFloat(value.style.fontSize) : 0;
     return {
@@ -3800,37 +3917,44 @@ function scrollToFormSection(id) {
   return true;
 }
 
-function fitPdfFieldText() {
-  document.querySelectorAll('.word-hit.pdf-fit .word-hit-value').forEach((text) => {
-    const node = text.parentElement;
-    if (!node) return;
-    const pad = 4;
-    const boxW = node.clientWidth - pad;
-    const boxH = node.clientHeight;
-    if (boxW < 8 || boxH < 8) return;
-    const max = Math.max(6, Math.min(boxH - 2, 18));
-    const min = 4;
-    const apply = (px) => {
-      text.style.fontSize = `${px}px`;
-      text.style.lineHeight = '1';
-    };
-    apply(max);
-    if (text.scrollWidth <= boxW) return;
-    let low = min;
-    let high = max;
-    let best = min;
-    for (let step = 0; step < 12; step += 1) {
-      const mid = (low + high) / 2;
-      apply(mid);
-      if (text.scrollWidth <= boxW) {
-        best = mid;
-        low = mid;
-      } else {
-        high = mid;
-      }
-    }
-    apply(best);
+function fitTextInside(el, box) {
+  const raw = fieldNodeText(el);
+  const count = Math.max(1, raw.split('\n').length);
+  const boxW = Math.max(8, box.clientWidth - 4);
+  const boxH = Math.max(8, box.clientHeight - 2);
+  const lineH = boxH / count;
+  let size = Math.max(4, Math.min(lineH * 0.86, 16));
+  const apply = (px) => {
+    el.style.fontSize = `${px}px`;
+    el.style.lineHeight = `${lineH}px`;
+    el.style.textAlign = 'left';
+    el.style.whiteSpace = 'pre-line';
+    el.style.display = 'block';
+    el.style.width = '100%';
+    el.style.maxWidth = '100%';
+    el.style.height = `${boxH}px`;
+    el.style.margin = '0';
+    el.style.overflow = 'hidden';
+  };
+  apply(size);
+  let guard = 0;
+  while (size > 4 && el.scrollWidth > boxW + 1 && guard < 40) {
+    size = Math.round((size - 0.3) * 10) / 10;
+    apply(size);
+    guard += 1;
+  }
+}
+
+function fitFilledFields(root) {
+  const scope = root || document;
+  scope.querySelectorAll('.word-hit .word-hit-value, td .excel-filled.pre').forEach((el) => {
+    const box = el.closest('.word-hit, td');
+    if (box) fitTextInside(el, box);
   });
+}
+
+function fitPdfFieldText() {
+  fitFilledFields();
 }
 
 function wordFieldCount(block) {
@@ -4724,7 +4848,7 @@ function bindExcelPane() {
     document.body.classList.add('excel-form');
     const bar = document.createElement('div');
     bar.className = 'excel-form-bar';
-    bar.innerHTML = '<button type="button" id="excelPrint">列印表格</button><span>列印整份檔案。已對應的欄位會自動填上。只有勾選框可以勾選，不能再改對應。</span>';
+    bar.innerHTML = '<button type="button" id="excelPrint">列印表格</button><button type="button" id="excelSave">另存檔案</button><span>列印整份檔案。已對應的欄位會自動填上。另存會把填好的檔案存到你指定的位置。</span>';
     const nav = document.querySelector('.excel-page-nav');
     if (nav) bar.querySelector('#excelPrint').after(nav);
     $('#excelBody').prepend(bar);
@@ -4741,6 +4865,7 @@ function bindExcelPane() {
         window.print();
       });
     });
+    $('#excelSave').addEventListener('click', () => saveFilledFile());
     window.addEventListener('resize', fitExcelSheet);
     window.addEventListener('beforeprint', fitExcelPrint);
     window.addEventListener('afterprint', () => fitExcelSheet());

@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .documents import add_party, add_record, ensure_party_ids, set_outdated, set_value
 from .excel_fields import suggest_fields
-from .excel_parser import DEFAULT_SHEET, ParseError, clip_to_print_area, parse_workbook, preview_sheet
+from .excel_parser import DEFAULT_SHEET, ParseError, clip_to_print_area, filled_copy, parse_workbook, preview_sheet
 from .form_pages import split_workbook_bytes
 from .word_layout import WordLayoutError, blank_gaps, clip_gaps, collect_fields, collect_ticks, layout_docx, page_png, place_fields
 from .word_preview import WordPreviewError, preview_docx
@@ -544,6 +544,24 @@ async def pdf_print(payload: dict = Body(...)) -> dict:
     except OSError as exc:
         raise HTTPException(422, "無法準備這份 PDF") from exc
     return {"token": remember_pdf_print(pdf)}
+
+
+@app.post("/api/excel/filled")
+async def excel_filled(payload: dict = Body(...)) -> Response:
+    """Return a copy of the workbook with the filled text written in. The source file is not changed."""
+    path = _resolve(str(payload.get("file") or ""))
+    cells = payload.get("cells") if isinstance(payload.get("cells"), list) else []
+    try:
+        data = await run_in_threadpool(filled_copy, path, cells)
+    except (OSError, BadZipFile, InvalidFileException) as exc:
+        raise HTTPException(422, "無法準備這份填好的 Excel") from exc
+    name = f"{path.stem}-filled.xlsx"
+    disposition = "attachment; filename*=UTF-8''" + quote(name)
+    return Response(
+        data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": disposition, "Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/pdf/print/{token}")

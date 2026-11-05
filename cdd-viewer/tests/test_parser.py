@@ -161,6 +161,10 @@ class PreviewSheetTests(unittest.TestCase):
         self.assertEqual(resolve_fill_token("CS.license")["kind"], "bool")
         self.assertIsNone(resolve_fill_token("DIR1.license"))
         self.assertEqual(resolve_fill_token("BR001.address.4")["key"], "BR001.address.4")
+        self.assertEqual(resolve_fill_token("RO.address")["key"], "RO.address")
+        self.assertEqual(resolve_fill_token("RO.address")["label"], "RO 整段地址")
+        self.assertIn("室/樓/座等", resolve_fill_token("RO.address.1")["label"])
+        self.assertIn("區", resolve_fill_token("DIR1.address.4")["label"])
         self.assertEqual(resolve_fill_token("RO.from")["key"], "RO.from")
         self.assertIsNone(resolve_fill_token("Ada"))
 
@@ -177,7 +181,8 @@ class PreviewSheetTests(unittest.TestCase):
         self.assertEqual(suggest_fields("com sec 牌照")[0]["key"], "CS.license")
         self.assertFalse(any(item["key"].endswith(".license") for item in suggest_fields("牌照", ["DIR1"])))
         self.assertEqual(suggest_fields("BR001 地址")[0]["key"], "BR001.address.1")
-        self.assertEqual(suggest_fields("", ["RO"])[0]["key"], "RO.address.1")
+        self.assertEqual(suggest_fields("", ["RO"])[0]["key"], "RO.address")
+        self.assertEqual(suggest_fields("整段", ["RO"])[0]["key"], "RO.address")
         self.assertEqual(suggest_fields("company.type")[0]["kind"], "choice")
 
     def test_inline_mark_keeps_surrounding_text_and_ticks_a_bool(self):
@@ -212,6 +217,23 @@ class PreviewSheetTests(unittest.TestCase):
         crossed = inline_parts("☒ 已勾選")
         self.assertEqual(crossed[0], {"tick": True, "checked": True})
         self.assertNotIn("☒", crossed[1]["text"])
+
+    def test_filled_copy_keeps_address_lines(self):
+        from app.excel_parser import filled_copy
+
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "CDD"
+        sheet["A1"] = "old"
+        sheet["B1"] = "地址"
+        buffer = BytesIO()
+        book.save(buffer)
+        data = filled_copy(buffer.getvalue(), [{
+            "sheet": "CDD", "row": 1, "col": "A", "text": "Room\nTower\nStreet\nCentral",
+        }])
+        saved = openpyxl.load_workbook(BytesIO(data))
+        self.assertEqual(saved.active["A1"].value.split("\n"), ["Room", "Tower", "Street", "Central"])
+        self.assertEqual(saved.active["B1"].value, "地址")
 
     def test_preview_keeps_excel_print_setup(self):
         book = openpyxl.Workbook()

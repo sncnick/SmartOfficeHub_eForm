@@ -2046,6 +2046,110 @@ def _cached_books(path: Path):
     return book, formula_book
 
 
+def filled_copy(source: str | Path | bytes, cells: list) -> bytes:
+    """Return a workbook copy with filled text written in. Untouched sheets stay byte for byte."""
+    raw = source if isinstance(source, (bytes, bytearray)) else Path(source).read_bytes()
+    updates: dict[str, dict[str, str]] = {}
+    for item in list(cells or [])[:2000]:
+        if not isinstance(item, dict):
+            continue
+        sheet = str(item.get("sheet") or "")
+        col = str(item.get("col") or "").strip().upper().replace("$", "")
+        try:
+            row = int(item.get("row") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not sheet or row < 1 or not col.isalpha():
+            continue
+        text = str(item.get("text") if item.get("text") is not None else "")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        updates.setdefault(sheet, {})[f"{col}{row}"] = text
+    if not updates:
+        return bytes(raw)
+    return _patch_xlsx(bytes(raw), updates)
+
+
+def _xml_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _unescape_xml(text: str) -> str:
+    return (
+        text.replace("&lt;", "<").replace("&gt;", ">")
+        .replace("&quot;", '"').replace("&apos;", "'").replace("&amp;", "&")
+    )
+
+
+def _sheet_targets(workbook: str, rels: str) -> dict[str, str]:
+    links = {}
+    for match in re.finditer(r"<Relationship\b([^>]*)/?>", rels):
+        attrs = match.group(1)
+        ident = re.search(r'\bId="([^"]+)"', attrs)
+        target = re.search(r'\bTarget="([^"]+)"', attrs)
+        if ident and target:
+            links[ident.group(1)] = _unescape_xml(target.group(1))
+    found = {}
+    for match in re.finditer(r"<sheet\b([^>]*)/?>", workbook):
+        attrs = match.group(1)
+        name = re.search(r'\bname="([^"]+)"', attrs)
+        rid = re.search(r'\br:id="([^"]+)"', attrs)
+        if not name or not rid:
+            continue
+        target = links.get(rid.group(1), "")
+        target = target.split("?")[0].lstrip("/")
+        if not target:
+            continue
+        if not target.startswith("xl/"):
+            target = "xl/" + target
+        found[_unescape_xml(name.group(1))] = target
+    return found
+
+
+def _replace_cell(xml: str, ref: str, text: str) -> str:
+    escaped = _xml_escape(text)
+    body = f'<is><t xml:space="preserve">{escaped}</t></is>'
+    pattern = re.compile(
+        rf'<c\b(?=[^>]*\br="{re.escape(ref)}")([^>]*)(?:/>|>(?:(?!</c>).)*</c>)',
+        re.DOTALL,
+    )
+
+    def repl(match: re.Match) -> str:
+        attrs = re.sub(r'\st="[^"]*"', "", match.group(1))
+        return f'<c{attrs} t="inlineStr">{body}</c>'
+
+    updated, count = pattern.subn(repl, xml, count=1)
+    return updated if count else xml
+
+
+def _patch_sheet(data: bytes, cells: dict[str, str]) -> bytes:
+    bom = data.startswith(b"\xef\xbb\xbf")
+    xml = data.decode("utf-8-sig")
+    for ref, text in cells.items():
+        xml = _replace_cell(xml, ref, text)
+    out = xml.encode("utf-8")
+    return b"\xef\xbb\xbf" + out if bom else out
+
+
+def _patch_xlsx(raw: bytes, updates: dict[str, dict[str, str]]) -> bytes:
+    import zipfile
+
+    source = zipfile.ZipFile(BytesIO(raw))
+    targets = _sheet_targets(
+        source.read("xl/workbook.xml").decode("utf-8"),
+        source.read("xl/_rels/workbook.xml.rels").decode("utf-8"),
+    )
+    changed = {targets[name]: cells for name, cells in updates.items() if name in targets}
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w") as dest:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename in changed:
+                data = _patch_sheet(data, changed[info.filename])
+            dest.writestr(info, data)
+    source.close()
+    return output.getvalue()
+
+
 def _preview_sources(source):
     if isinstance(source, (bytes, bytearray)):
         return BytesIO(source), BytesIO(source)

@@ -351,6 +351,33 @@ body.excel-form .print-page .word-sheet img {
   line-height: 1;
   white-space: nowrap;
 }
+.word-hit.lines,
+.word-hit.pdf-fit.lines {
+  overflow: hidden;
+  text-align: left;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.word-hit.lines,
+.word-hit.pdf-fit.lines,
+body.excel-form .excel-cell-show:has(.excel-filled.pre) {
+  overflow: hidden;
+  text-align: left;
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+.word-hit.lines .word-hit-value,
+.word-hit.pdf-fit.lines .word-hit-value,
+.word-hit-value.pre,
+.excel-filled.pre,
+button.excel-live.pre {
+  display: block;
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  white-space: normal;
+  line-height: 1.25;
+}
 .word-hit.enter {
   z-index: 8;
   display: flex;
@@ -810,6 +837,10 @@ tr.issue-row td { padding: 2px 8px 6px; border-bottom: 1px solid #fecaca; backgr
   gap: 10px 14px;
   margin-top: 8px;
 }
+.addr-grid .field.addr-line { grid-column: 1 / -1; }
+.addr-stack { display: flex; flex-direction: column; gap: 6px; min-width: 18rem; }
+.addr-stack-line { display: flex; flex-direction: column; gap: 2px; }
+.addr-stack-line > span { color: var(--muted); font-size: 11px; line-height: 1.3; }
 .addr-grid .field-issues,
 .addr-grid .addr-flag { grid-column: 1 / -1; }
 .addr-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
@@ -1304,7 +1335,26 @@ body.excel-form .excel-cell-show .excel-filled {
   overflow: visible;
   text-overflow: clip;
 }
-body.excel-form .excel-filled { white-space: nowrap; }
+.word-hit-value.pre,
+.excel-live.pre,
+.excel-filled.pre,
+body.excel-form .excel-filled.pre,
+body.excel-form .excel-cell-show .excel-filled.pre,
+body.excel-form .excel-cell-show.wrap .excel-filled.pre {
+  white-space: pre-line;
+}
+body.excel-form .excel-cell-show:has(.excel-filled.pre) {
+  display: block;
+  left: 0;
+  right: auto;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  text-align: left;
+  white-space: normal;
+}
 body.excel-form .excel-cell-show.wrap {
   left: 0;
   right: 0;
