@@ -20,14 +20,15 @@ services:
     ports:
       - "127.0.0.1:${CDD_PORT:-8765}:8000"
     environment:
-      CDD_DEFAULT_FILE: "CDD base dummy.xlsx"
+      CDD_DEFAULT_FILE: ""
       CDD_SHEET: "CDD"
       CDD_OUTDATED_FILLS: "00B0F0"
+      CDD_FORMS_DIR: /app/forms
       CDD_MONGO_URL: mongodb://mongo:27017
       CDD_MONGO_DB: cdd
       CDD_LMSTUDIO_URL: http://host.docker.internal:1234/v1
     volumes:
-      - "${CDD_EXCEL_DIR:-../Database purge}:/data:ro"
+      - cdd-forms:/app/forms
       - "./output:/app/output"
     depends_on:
       mongo:
@@ -36,3 +37,4 @@ services:
 
 volumes:
   cdd-mongo:
+  cdd-forms:

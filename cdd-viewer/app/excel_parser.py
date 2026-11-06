@@ -2024,6 +2024,20 @@ _PREVIEW_BOOKS: dict[str, tuple[int, object, object]] = {}
 _PREVIEW_LOCK = threading.Lock()
 
 
+def release_preview(path: Path) -> None:
+    """Close a cached workbook so a deleted file is not kept open."""
+    key = str(Path(path).resolve())
+    with _PREVIEW_LOCK:
+        cached = _PREVIEW_BOOKS.pop(key, None)
+    if cached is None:
+        return
+    for book in cached[1:]:
+        try:
+            book.close()
+        except Exception:
+            pass
+
+
 def _cached_books(path: Path):
     """Keep the opened workbook so the next sheet does not read the file again."""
     resolved = path.resolve()

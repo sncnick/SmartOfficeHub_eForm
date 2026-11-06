@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CDD 公司資料檢視</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261103cb">
+  <link rel="stylesheet" href="/static/style.css?v=20261106a">
 </head>
 <body>
   <header class="topbar">
@@ -65,6 +65,9 @@
             </div>
             <div class="excel-fold-actions">
               <button type="button" class="btn" id="excelRead">讀取</button>
+              <label class="btn" for="formUpload">上載</label>
+              <input type="file" id="formUpload" accept=".xlsx,.xlsm,.pdf,.docx" hidden>
+              <button type="button" class="btn" id="formDelete">刪除</button>
               <button type="button" class="btn" id="excelSplit" title="依列印範圍拆成獨立工作表，再合成一份表格檔">依列印範圍組成表格檔</button>
             </div>
             <div class="excel-fold-actions excel-map-save">
@@ -80,7 +83,7 @@
             <button type="button" class="btn small" id="excelFormPageToggle" disabled title="標記這一頁納入表格 PDF">納入</button>
             <button type="button" class="btn small" id="excelSheetNext" disabled>下一頁</button>
           </div>
-          <p class="muted small" id="excelMeta">選擇檔案後按讀取。儲存格寫 [[]] 後，該格會變成可搜尋的下拉選單。這不會改資料庫。</p>
+          <p class="muted small" id="excelMeta">按上載放入 Excel 或 PDF。刪除只移除檔案，不會清除已匯入的公司資料。</p>
         </div>
         <div class="excel-scroll" id="excelScroll"></div>
         <div class="excel-pager">
@@ -137,6 +140,6 @@
   </div>
 
   <div class="pie-tip hidden" id="pieTip" role="tooltip"></div>
-  <script src="/static/app.js?v=20261103cb"></script>
+  <script src="/static/app.js?v=20261106a"></script>
 </body>
 </html>

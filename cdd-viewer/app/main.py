@@ -20,7 +20,16 @@ from starlette.concurrency import run_in_threadpool
 
 from .documents import add_party, add_record, ensure_party_ids, set_outdated, set_value
 from .excel_fields import suggest_fields
-from .excel_parser import DEFAULT_SHEET, ParseError, clip_to_print_area, filled_copy, parse_workbook, preview_sheet
+from .excel_parser import (
+    DEFAULT_SHEET,
+    ParseError,
+    clip_to_print_area,
+    filled_copy,
+    parse_workbook,
+    preview_sheet,
+    release_preview,
+)
+from .form_library import delete_form, form_path, list_forms, save_form
 from .form_pages import split_workbook_bytes
 from .word_layout import WordLayoutError, blank_gaps, clip_gaps, collect_fields, collect_ticks, layout_docx, page_png, place_fields
 from .word_preview import WordPreviewError, preview_docx
@@ -31,7 +40,6 @@ from .store import get_store
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-DATA_DIR = Path(os.environ.get("CDD_DATA_DIR", BASE_DIR.parent / "data")).resolve()
 OUTPUT_DIR = Path(os.environ.get("CDD_OUTPUT_DIR", BASE_DIR.parent / "output")).resolve()
 DEFAULT_FILE = os.environ.get("CDD_DEFAULT_FILE", "")
 SHEET = os.environ.get("CDD_SHEET", DEFAULT_SHEET)
@@ -59,30 +67,19 @@ _grid_cache: dict[tuple[str, str], tuple[float, dict]] = {}
 _uploads: dict[str, dict] = {}
 
 
-def _listed_files(suffixes: set[str]) -> list[Path]:
-    if not DATA_DIR.is_dir():
-        return []
-    return sorted(p for p in DATA_DIR.rglob("*")
-                  if p.is_file() and p.suffix.lower() in suffixes and not p.name.startswith("~$"))
+def _stored(suffixes: set[str]) -> list[Path]:
+    return [path for path in list_forms() if path.suffix.lower() in suffixes]
 
 
-def _excel_files() -> list[Path]:
-    return _listed_files(EXCEL_SUFFIXES)
-
-
-def _word_files() -> list[Path]:
-    return _listed_files(WORD_SUFFIXES)
-
-
-def _pdf_files() -> list[Path]:
-    return _listed_files(PDF_SUFFIXES)
+def _resolve_stored(name: str, suffixes: set[str], missing: str) -> Path:
+    path = form_path(name)
+    if path.suffix.lower() not in suffixes or not path.is_file():
+        raise HTTPException(404, missing)
+    return path
 
 
 def _resolve(name: str) -> Path:
-    path = (DATA_DIR / name).resolve()
-    if DATA_DIR not in path.parents or path.suffix.lower() not in EXCEL_SUFFIXES or not path.is_file():
-        raise HTTPException(404, "找不到這個 Excel 檔")
-    return path
+    return _resolve_stored(name, EXCEL_SUFFIXES, "找不到這個 Excel 檔")
 
 
 def _parse(source, file_name: str) -> dict:
@@ -111,7 +108,7 @@ def _file_data(name: str) -> dict:
         cached = _cache.get(path)
     if cached and cached[0] == mtime:
         return cached[1]
-    data = _parse(path, str(path.relative_to(DATA_DIR)))
+    data = _parse(path, path.name)
     with _lock:
         _cache[path] = (mtime, data)
     _write_output(path, data)
@@ -270,14 +267,15 @@ async def import_file(file: str, replace: bool = False) -> dict:
 
 @app.post("/api/import/upload")
 async def import_upload(replace: bool = False, file: UploadFile = File(...)) -> dict:
-    name = Path(file.filename or "upload.xlsx").name
+    name = Path(file.filename or "").name
     if Path(name).suffix.lower() not in EXCEL_SUFFIXES:
         raise HTTPException(400, "只接受 .xlsx 或 .xlsm 檔")
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "檔案超過 30 MB")
-    data = await run_in_threadpool(_parse, content, name)
-    return _import_parsed(data, name, replace)
+    saved = await run_in_threadpool(save_form, name, content)
+    data = await run_in_threadpool(_parse, saved, saved.name)
+    return _import_parsed(data, saved.name, replace)
 
 
 @app.get("/api/export")
@@ -431,10 +429,7 @@ def _overlaps(left: dict, right: dict) -> bool:
 
 
 def _resolve_word(name: str) -> Path:
-    path = (DATA_DIR / name).resolve()
-    if DATA_DIR not in path.parents or path.suffix.lower() not in WORD_SUFFIXES or not path.is_file():
-        raise HTTPException(404, "找不到這個 Word 檔")
-    return path
+    return _resolve_stored(name, WORD_SUFFIXES, "找不到這個 Word 檔")
 
 
 @app.get("/api/word/preview")
@@ -495,10 +490,7 @@ def word_page(file: str, n: int = 1) -> Response:
 
 
 def _resolve_pdf(name: str) -> Path:
-    path = (DATA_DIR / name).resolve()
-    if DATA_DIR not in path.parents or path.suffix.lower() not in PDF_SUFFIXES or not path.is_file():
-        raise HTTPException(404, "找不到這個 PDF 檔")
-    return path
+    return _resolve_stored(name, PDF_SUFFIXES, "找不到這個 PDF 檔")
 
 
 @app.get("/api/pdf/preview")
@@ -576,22 +568,47 @@ def pdf_print_file(token: str) -> Response:
     )
 
 
+def _forget_stored(path: Path) -> None:
+    release_preview(path)
+    with _lock:
+        _cache.pop(path, None)
+        dead = [key for key in _grid_cache if key[0] == str(path)]
+        for key in dead:
+            _grid_cache.pop(key, None)
+
+
 @app.get("/api/files")
 def list_files() -> dict:
-    files = _excel_files()
-    words = _word_files()
-    pdfs = _pdf_files()
-    names = [str(p.relative_to(DATA_DIR)) for p in files]
-    preview = files + words + pdfs
+    files = _stored(EXCEL_SUFFIXES)
+    preview = _stored(EXCEL_SUFFIXES | WORD_SUFFIXES | PDF_SUFFIXES)
+    names = [path.name for path in files]
     default = DEFAULT_FILE if DEFAULT_FILE in names else (names[0] if names else None)
     return {
-        "files": [{"name": name, "size": path.stat().st_size} for name, path in zip(names, files)],
+        "files": [{"name": path.name, "size": path.stat().st_size} for path in files],
         "preview_files": [
-            {"name": str(path.relative_to(DATA_DIR)), "size": path.stat().st_size, "kind": path.suffix.lower().lstrip(".")}
+            {"name": path.name, "size": path.stat().st_size, "kind": path.suffix.lower().lstrip(".")}
             for path in preview
         ],
         "default": default,
     }
+
+
+@app.post("/api/forms")
+async def upload_form(file: UploadFile = File(...)) -> dict:
+    """Keep an Excel, PDF, or Word file on this machine. The original folder is not used."""
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "檔案超過 30 MB")
+    saved = await run_in_threadpool(save_form, file.filename or "", content)
+    return {"name": saved.name}
+
+
+@app.delete("/api/forms")
+def remove_form(name: str) -> dict:
+    """Remove one uploaded file. Company records already in the database stay."""
+    removed = delete_form(name)
+    _forget_stored(removed)
+    return {"deleted": removed.name}
 
 
 @app.get("/api/data")

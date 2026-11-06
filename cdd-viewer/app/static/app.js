@@ -1603,16 +1603,9 @@ async function importNamed(name, replace = false) {
 async function importUpload(file, replace = false) {
   const form = new FormData();
   form.append('file', file);
-  try {
-    await api(`/api/import/upload?replace=${replace ? 'true' : 'false'}`, { method: 'POST', body: form });
-  } catch (err) {
-    if (!replace && String(err.message).includes('取代')
-      && confirm('資料庫已有公司。再匯入會取代現有資料，已新增的 DIR、SH、Com Sec 會消失。確定匯入？')) {
-      return importUpload(file, true);
-    }
-    throw err;
-  }
-  await loadDatabase();
+  const saved = await api('/api/forms', { method: 'POST', body: form });
+  await refreshFileLists(saved.name);
+  await importNamed(saved.name, replace);
 }
 
 function replaceCompany(company) {
@@ -4920,6 +4913,45 @@ function bindExcelPane() {
   syncExcelSheetNav();
   renderFormPages();
   refreshMapProfiles();
+  $('#formUpload').addEventListener('change', async (event) => {
+    const [file] = event.target.files;
+    event.target.value = '';
+    if (!file) return;
+    const body = new FormData();
+    body.append('file', file);
+    try {
+      const saved = await api('/api/forms', { method: 'POST', body });
+      await refreshFileLists(saved.name);
+      excelView.loaded = false;
+      excelView.start = 1;
+      loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
+    } catch (err) {
+      $('#excelMeta').textContent = err.message;
+    }
+  });
+  $('#formDelete').addEventListener('click', async () => {
+    const name = $('#excelFile').value;
+    if (!name) {
+      $('#excelMeta').textContent = '沒有可刪除的檔案。';
+      return;
+    }
+    if (!confirm(`刪除「${name}」？已匯入的公司資料會保留。`)) return;
+    try {
+      await api(`/api/forms?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+      await refreshFileLists();
+      excelView.loaded = false;
+      excelView.start = 1;
+      $('#excelScroll').innerHTML = '';
+      $('#excelSheet').innerHTML = '';
+      if ($('#excelFile').value) {
+        loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
+      } else {
+        $('#excelMeta').textContent = '按上載放入 Excel 或 PDF。刪除只移除檔案，不會清除已匯入的公司資料。';
+      }
+    } catch (err) {
+      $('#excelMeta').textContent = err.message;
+    }
+  });
   $('#excelRead').addEventListener('click', () => {
     excelView.start = 1;
     loadExcelGrid().catch((err) => { $('#excelMeta').textContent = err.message; });
@@ -5178,25 +5210,37 @@ function bindExcelPane() {
   });
 }
 
+function fillFileSelects(listed, preferred) {
+  const files = listed.files || [];
+  const preview = listed.preview_files || files;
+  const selectEl = $('#fileSelect');
+  const previewEl = $('#excelFile');
+  const previousCompany = selectEl.value;
+  const previousPreview = previewEl.value;
+  selectEl.innerHTML = files.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join('');
+  previewEl.innerHTML = preview.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join('');
+  const companyNames = files.map((item) => item.name);
+  const previewNames = preview.map((item) => item.name);
+  const companyChoice = [preferred, previousCompany, listed.default].find((name) => companyNames.includes(name));
+  if (companyChoice) selectEl.value = companyChoice;
+  const previewChoice = [preferred, previousPreview, listed.default].find((name) => previewNames.includes(name));
+  if (previewChoice) previewEl.value = previewChoice;
+  syncExcelPickSummary();
+}
+
+async function refreshFileLists(preferred) {
+  const listed = await api('/api/files');
+  fillFileSelects(listed, preferred);
+  return listed;
+}
+
 async function init() {
   bindEvents();
   bindExcelPane();
   try {
-    const listed = await api('/api/files');
-    const files = listed.files || [];
-    const defaultFile = listed.default;
-    const selectEl = $('#fileSelect');
-    const options = files.map((f) => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
-    const preview = listed.preview_files || files;
-    selectEl.innerHTML = options;
-    $('#excelFile').innerHTML = preview.map((f) => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('');
-    if (files.length) selectEl.value = defaultFile || files[0].name;
-    const previewNames = preview.map((item) => item.name);
-    if (previewNames.includes(defaultFile)) $('#excelFile').value = defaultFile;
-    else if (previewNames.length) $('#excelFile').value = previewNames[0];
-    syncExcelPickSummary();
+    await refreshFileLists();
   } catch {
-    // The company list still comes from MongoDB when the Excel folder cannot be listed.
+    // The company list still comes from MongoDB when the file list cannot be loaded.
   }
   try {
     await loadDatabase();

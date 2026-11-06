@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    CDD_DATA_DIR=/data \
+    CDD_FORMS_DIR=/app/forms \
     CDD_OUTPUT_DIR=/app/output
 
 WORKDIR /app
@@ -29,8 +29,8 @@ COPY app ./app
 COPY tests ./tests
 
 RUN useradd --create-home --uid 1000 appuser \
-    && mkdir -p /app/output /data \
-    && chown appuser /app/output
+    && mkdir -p /app/output /app/forms \
+    && chown appuser /app/output /app/forms
 USER appuser
 
 EXPOSE 8000
