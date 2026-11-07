@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from openpyxl.utils.exceptions import InvalidFileException
 from starlette.concurrency import run_in_threadpool
 
-from .documents import add_party, add_record, ensure_party_ids, set_outdated, set_value
+from .documents import add_party, add_record, blank_company, ensure_party_ids, set_outdated, set_value
 from .excel_fields import suggest_fields
 from .excel_parser import (
     DEFAULT_SHEET,
@@ -200,6 +200,17 @@ def health() -> dict:
 @app.get("/api/database")
 def database() -> dict:
     return _database_payload()
+
+
+@app.post("/api/companies")
+def create_company() -> dict:
+    """Add an empty company. It is not taken from Excel."""
+    store = get_store()
+    company = blank_company()
+    while store.get(company["id"]) is not None:
+        company = blank_company()
+    company["created_at"] = company["updated_at"] = _now()
+    return store.save(company)
 
 
 @app.post("/api/companies/{company_id}/parties")

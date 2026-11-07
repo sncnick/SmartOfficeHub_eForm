@@ -4,26 +4,41 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CDD 公司資料檢視</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261106a">
+  <link rel="stylesheet" href="/static/style.css?v=20261108e">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">CDD 公司資料檢視</div>
     <div class="toolbar">
-      <label class="control">匯入用 Excel
-        <select id="fileSelect" aria-label="選擇要匯入的 Excel"></select>
-      </label>
-      <button type="button" class="btn" id="importFileBtn">匯入所選 Excel</button>
-      <label class="btn">上載 Excel
-        <input type="file" id="uploadInput" accept=".xlsx,.xlsm" hidden>
-      </label>
-      <button type="button" class="btn" id="downloadBtn">下載 JSON</button>
-      <button type="button" class="btn" id="issuesBtn">資料問題 <span id="issueCount" class="count"></span></button>
+      <div class="menu" id="actionMenu">
+        <button type="button" class="btn" id="actionMenuBtn" aria-expanded="false" aria-controls="actionMenuList">功能</button>
+        <div class="menu-list hidden" id="actionMenuList" role="menu" aria-label="功能">
+          <div class="menu-file">
+            <label>匯入用 Excel
+              <select id="fileSelect" aria-label="選擇要匯入的 Excel"></select>
+            </label>
+            <button type="button" role="menuitem" id="importFileBtn">匯入所選 Excel</button>
+          </div>
+          <label class="menu-item" for="uploadInput">上載 Excel
+            <input type="file" id="uploadInput" accept=".xlsx,.xlsm" hidden>
+          </label>
+          <button type="button" role="menuitem" id="downloadBtn">下載 JSON</button>
+          <button type="button" role="menuitem" id="issuesBtn">資料問題 <span id="issueCount" class="count"></span></button>
+        </div>
+      </div>
+      <button type="button" class="btn" id="addCompany">新增公司</button>
       <button type="button" class="btn" id="openSettings">設定</button>
       <label class="control"><input type="checkbox" id="expandOutdated"> 展開所有 OUTDATED</label>
     </div>
   </header>
-  <div class="source-bar" id="sourceBar"></div>
+  <div class="source-bar" id="sourceBar">
+    <div class="company-find">
+      <input type="search" id="companyFind" placeholder="搜尋公司中文或英文名稱" autocomplete="off" aria-label="搜尋公司名稱" aria-expanded="false" aria-controls="companyFindList">
+      <div class="company-find-list hidden" id="companyFindList" role="listbox"></div>
+    </div>
+    <button type="button" class="btn small" id="systemLogBtn" aria-expanded="false" aria-controls="systemLog">系統記錄</button>
+    <div class="system-log hidden" id="systemLog" role="region" aria-label="系統記錄"></div>
+  </div>
 
   <div class="layout excel-collapsed">
     <aside class="sidebar">
@@ -140,6 +155,6 @@
   </div>
 
   <div class="pie-tip hidden" id="pieTip" role="tooltip"></div>
-  <script src="/static/app.js?v=20261106a"></script>
+  <script src="/static/app.js?v=20261108e"></script>
 </body>
 </html>

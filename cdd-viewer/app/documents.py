@@ -24,6 +24,55 @@ def new_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def blank_company() -> dict:
+    """A company with no Excel row, ready to fill in on screen."""
+    return {
+        "id": f"new-{new_id()}",
+        "company_no": "",
+        "row": None,
+        "label_color": None,
+        "color_name": None,
+        "color_group": "none",
+        "red_label": False,
+        "active": True,
+        "status": "active",
+        "status_note": None,
+        "status_date": None,
+        "added": True,
+        "general": {
+            "name_en": None,
+            "name_zh": None,
+            "ci_no": None,
+            "br_no": None,
+            "incorporation_date": None,
+            "company_type": None,
+        },
+        "former_names": [],
+        "business_names": [],
+        "branches": [],
+        "registered_offices": [],
+        "share_capital": [],
+        "current_share_capital_row": None,
+        "share_capital_missing": [],
+        "issued_shares": None,
+        "currency": None,
+        "holdings_total": None,
+        "shareholding_summary": [],
+        "directors": [],
+        "shareholders": [],
+        "company_secretaries": [],
+        "other_parties": [],
+        "notes": [],
+        "issues": [],
+        "counts": {
+            "current_directors": 0,
+            "current_company_secretaries": 0,
+            "current_shareholders": 0,
+            "issues": {"error": 0, "warning": 0, "info": 0},
+        },
+    }
+
+
 def summary(doc: dict) -> dict:
     general = doc.get("general") or {}
     labels = []
@@ -392,6 +441,12 @@ def _text(data: dict, key: str) -> str | None:
     return value or None
 
 
+def _contact_items(value: str | None) -> list[dict]:
+    if not value:
+        return []
+    return [{"value": value, "row": None, "outdated": False, "outdated_reasons": []}]
+
+
 def add_party(company: dict, data: dict) -> dict:
     company = copy.deepcopy(company)
     kind = str(data.get("kind") or "").upper()
@@ -400,13 +455,15 @@ def add_party(company: dict, data: dict) -> dict:
         raise ValueError("只可以新增 DIR、SH 或 Com Sec")
     label = chosen_label(data.get("label"), kind)
     lines = [str(data.get(f"line{index}") or "").strip() for index in range(1, 5)]
+    start = _text(data, "from")
+    end_addr = _text(data, "to")
     addresses = []
-    if any(lines):
+    if any(lines) or start or end_addr:
         addresses.append({
             "address": ", ".join(line for line in lines if line),
             "lines": lines,
-            "from": None,
-            "to": None,
+            "from": start,
+            "to": end_addr,
             "row": None,
             "outdated": False,
             "outdated_reasons": [],
@@ -438,12 +495,12 @@ def add_party(company: dict, data: dict) -> dict:
         "name_en": _text(data, "name_en"),
         "name_zh": _text(data, "name_zh"),
         "date_of_birth": _text(data, "date_of_birth"),
-        "ci_no": _text(data, "ci_no") if kind == "CS" else None,
-        "br_no": _text(data, "br_no") if kind == "CS" else None,
+        "ci_no": _text(data, "ci_no"),
+        "br_no": _text(data, "br_no"),
         "id_numbers": id_numbers,
         "addresses": addresses,
-        "emails": [],
-        "phones": [],
+        "emails": _contact_items(_text(data, "email")),
+        "phones": _contact_items(_text(data, "phone")),
         "other": [],
         "appoint_date": _text(data, "appoint_date"),
         "appoint_date_row": None,

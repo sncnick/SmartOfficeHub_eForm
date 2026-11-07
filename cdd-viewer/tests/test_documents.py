@@ -1,7 +1,7 @@
 import unittest
 
 from app.documents import (
-    add_party, add_record, collapse_current_addresses, mark_earlier_holdings, park_misfilled_addresses,
+    add_party, add_record, blank_company, collapse_current_addresses, mark_earlier_holdings, park_misfilled_addresses,
     reclaim_outdated_addresses, remember_merged_rows, restore_address_issue_fields,
     retag_undefined_address_issues, set_outdated, set_value, single_secretary_address, stamp_id_types,
 )
@@ -26,6 +26,20 @@ def company():
         }],
         "issues": [],
     }
+
+
+class BlankCompanyTests(unittest.TestCase):
+    def test_a_new_company_starts_blank_and_can_be_named(self):
+        created = blank_company()
+        self.assertTrue(created["id"].startswith("new-"))
+        self.assertEqual(created["company_no"], "")
+        self.assertEqual(created["status"], "active")
+        self.assertEqual(created["color_group"], "none")
+        self.assertEqual(created["counts"]["issues"], {"error": 0, "warning": 0, "info": 0})
+        named = set_value(created, ["company_no"], "9001")
+        named = set_value(named, ["general", "name_en"], "North Office")
+        self.assertEqual(named["company_no"], "9001")
+        self.assertEqual(named["general"]["name_en"], "North Office")
 
 
 class SecretaryAddressTests(unittest.TestCase):
@@ -213,6 +227,26 @@ class EditFieldTests(unittest.TestCase):
 
 
 class AddPartyTests(unittest.TestCase):
+    def test_added_person_keeps_the_same_fields_as_an_existing_card(self):
+        updated = add_party(company(), {
+            "kind": "SH",
+            "label": "SH2",
+            "name_en": "New Holder",
+            "ci_no": "CI9",
+            "email": "holder@example.com",
+            "phone": "12345678",
+            "line1": "Room 1",
+            "from": "2024-01-01",
+            "ubo": "true",
+        })
+        party = updated["shareholders"][-1]
+        self.assertEqual(party["ci_no"], "CI9")
+        self.assertTrue(party["ubo"])
+        self.assertEqual(party["emails"][0]["value"], "holder@example.com")
+        self.assertEqual(party["phones"][0]["value"], "12345678")
+        self.assertEqual(party["addresses"][0]["from"], "2024-01-01")
+        self.assertEqual(party["addresses"][0]["lines"][0], "Room 1")
+
     def test_same_number_can_be_added_again(self):
         updated = add_party(company(), {"kind": "DIR", "label": "DIR1", "name_en": "New Person"})
         labels = [party["label"] for party in updated["directors"]]

@@ -623,7 +623,7 @@ function generalSection(c) {
     ? table(['標籤', '地址', 'BR', '開始日期', '結束日期', '狀態', 'Excel 行'],
       branches.current.map(branchRow), branches.outdated.map(branchRow))
     : ''}`;
-  return section('公司資料 General', body, `Excel 第 ${c.row} 行`, rowAttr(c.row));
+  return section('公司資料 General', body, c.row ? `Excel 第 ${c.row} 行` : '人手新增', rowAttr(c.row));
 }
 
 function roCard(e, pathBase = '') {
@@ -1099,41 +1099,53 @@ function addRecordBox(kind, title, inner, attrs = '') {
     <button type="submit" class="btn">加入</button></form></details>`;
 }
 
+function addAddressFields() {
+  const lines = ADDRESS_LINE_LABELS.map((label, index) => (
+    `<div class="field addr-line"><label>${esc(label)}</label><input name="line${index + 1}" autocomplete="off"></div>`
+  )).join('');
+  return `<div class="span-3 addr-grid">${lines}`
+    + '<div class="field"><label>開始日期</label><input name="from" autocomplete="off"></div>'
+    + '<div class="field"><label>結束日期</label><input name="to" autocomplete="off"></div></div>';
+}
+
 function addPartyBox(key) {
   const kind = ADDABLE[key];
   if (!kind || !render.company) return '';
   const title = kind === 'CS' ? '新增 Com Sec' : `新增 ${kind}`;
   const placeholder = kind === 'CS' ? '例如 CS1' : `例如 ${kind}1`;
-  const corporate = kind === 'CS'
-    ? '<div class="field"><label>CI</label><input name="ci_no" autocomplete="off"></div><div class="field"><label>BR</label><input name="br_no" autocomplete="off"></div>'
-    : '';
-  const shares = kind === 'SH'
-    ? '<div class="field"><label>股數</label><input name="shares" autocomplete="off"></div>'
-    : '';
   const ubo = kind === 'SH' || kind === 'CS'
     ? '<label class="ubo-tick"><input type="checkbox" name="ubo" value="true"> 是否 UBO</label>'
     : '';
   const license = kind === 'CS'
-    ? '<label class="license-tick"><input type="checkbox" name="license_not_required" value="true"> 無須領有牌照 Not Required to obtain a license</label>'
+    ? '<div class="field span-3"><label class="license-tick"><input type="checkbox" name="license_not_required" value="true"> 無須領有牌照 Not Required to obtain a license</label></div>'
       + textInput('原因 Reason', 'license_reason', 'span-2')
+    : '';
+  const shares = kind === 'SH'
+    ? textInput('股數', 'shares')
     : '';
   return `<details class="add-party"><summary>${esc(title)}</summary>
     <form data-add-party="${kind}">
-      <div class="grid">
+      <div class="party-add-head">
         ${textInput('編號', 'label', '', '', placeholder)}
+        ${ubo}
+      </div>
+      <div class="grid">
         <div class="field span-2"><label>英文名稱 Name</label><input name="name_en" autocomplete="off"></div>
         <div class="field"><label>中文名稱</label><input name="name_zh" autocomplete="off"></div>
-        <div class="field"><label>出生日期</label><input name="date_of_birth" autocomplete="off"></div>
+        <div class="field"><label>出生日期 Date of birth</label><input name="date_of_birth" autocomplete="off"></div>
         <div class="field"><label>身份證／證件</label><input name="id_number" autocomplete="off">${idTypeTicks('', '')}</div>
         <div class="field spacer"></div>
-        ${corporate}
-        <div class="field"><label>委任日期</label><input name="appoint_date" autocomplete="off"></div>
-        <div class="field"><label>辭任日期</label><input name="resign_date" autocomplete="off"></div>
+        <div class="field"><label>CI</label><input name="ci_no" autocomplete="off"></div>
+        <div class="field"><label>BR</label><input name="br_no" autocomplete="off"></div>
         <div class="field spacer"></div>
-        ${ADDRESS_LINE_LABELS.map((label, index) => `<div class="field span-3"><label>${esc(label)}</label><input name="line${index + 1}" autocomplete="off"></div>`).join('')}
-        ${shares}
-        ${ubo}
+        <div class="field"><label>委任日期 Appoint date</label><input name="appoint_date" autocomplete="off"></div>
+        <div class="field"><label>辭任日期 Resign date</label><input name="resign_date" autocomplete="off"></div>
         ${license}
+        <div class="field spacer"></div>
+        ${addAddressFields()}
+        ${textInput('Email', 'email')}
+        ${textInput('電話 Tel', 'phone')}
+        ${shares}
       </div>
       <button type="submit" class="btn">加入</button>
     </form></details>`;
@@ -1285,17 +1297,70 @@ function showMessage(text) {
 
 function renderSourceBar() {
   const d = state.data;
-  const s = d.source;
-  const counts = d.summary.issues;
+  const s = d.source || {};
+  const counts = d.summary?.issues || { error: 0, warning: 0, info: 0 };
   const sheetWarnings = (d.issues || []).filter((i) => i.severity !== 'info')
     .map((i) => `<span class="warn">⚠ ${esc(i.message)}</span>`).join('');
   const headerRows = Array.isArray(s.header_rows) ? s.header_rows : [];
-  $('#sourceBar').innerHTML = `資料庫：<b>MongoDB</b>　已儲存 ${d.summary.companies} 間公司，重新整理會直接讀取，不用再上載`
-    + (s.file ? `　來源檔：<b>${esc(s.file)}</b>` : '')
-    + `　工作表：${esc(s.sheet || '')}　表頭：第 ${esc(headerRows.join('–'))} 行`
-    + `　問題：錯誤 ${counts.error}、警告 ${counts.warning}、提示 ${counts.info}`
-    + `　匯入時間：${esc(s.parsed_at ? new Date(s.parsed_at).toLocaleString('zh-HK') : '')}${sheetWarnings}`;
-  $('#issueCount').textContent = counts.error + counts.warning;
+  const log = $('#systemLog');
+  if (log) {
+    log.innerHTML = `資料庫：<b>MongoDB</b>　已儲存 ${d.summary?.companies ?? 0} 間公司，重新整理會直接讀取，不用再上載`
+      + (s.file ? `　來源檔：<b>${esc(s.file)}</b>` : '')
+      + `　工作表：${esc(s.sheet || '')}　表頭：第 ${esc(headerRows.join('–'))} 行`
+      + `　問題：錯誤 ${counts.error}、警告 ${counts.warning}、提示 ${counts.info}`
+      + `　匯入時間：${esc(s.parsed_at ? new Date(s.parsed_at).toLocaleString('zh-HK') : '')}${sheetWarnings}`;
+  }
+  const issueCount = $('#issueCount');
+  if (issueCount) issueCount.textContent = counts.error + counts.warning;
+}
+
+function companyTitle(company) {
+  const general = company.general || {};
+  return [general.name_en, general.name_zh].filter(Boolean).join('　');
+}
+
+function closeCompanyFind() {
+  const list = $('#companyFindList');
+  const input = $('#companyFind');
+  if (!list || !input) return;
+  list.classList.add('hidden');
+  input.setAttribute('aria-expanded', 'false');
+}
+
+function renderCompanyFind() {
+  const input = $('#companyFind');
+  const list = $('#companyFindList');
+  if (!input || !list) return;
+  const query = input.value.trim().toLowerCase();
+  if (!query || !state.data) {
+    closeCompanyFind();
+    return;
+  }
+  const matches = (state.data.companies || []).filter((company) => {
+    const general = company.general || {};
+    const en = String(general.name_en || '').toLowerCase();
+    const zh = String(general.name_zh || '').toLowerCase();
+    return en.includes(query) || zh.includes(query);
+  });
+  const shown = matches.slice(0, 20);
+  const more = matches.length > shown.length
+    ? `<p class="muted">只顯示首 ${shown.length} 間，共 ${matches.length} 間</p>` : '';
+  list.innerHTML = shown.length
+    ? shown.map((company) => `<button type="button" role="option" data-company-id="${esc(company.id)}">${esc(companyTitle(company))}</button>`).join('') + more
+    : '<p class="muted">沒有相符的公司</p>';
+  list.classList.remove('hidden');
+  input.setAttribute('aria-expanded', 'true');
+}
+
+function chooseCompanyFind(id) {
+  const company = state.data?.companies?.find((item) => item.id === id);
+  if (!company) return;
+  filters.colors.add(colorKey(company));
+  filters.statuses.add(company.status);
+  if (!warnCount(company)) filters.onlyIssues = false;
+  if ($('#filterPanel')?.childElementCount) syncPanel();
+  select(id);
+  closeCompanyFind();
 }
 
 // ---------------------------------------------------------------- advanced filter (tick boxes)
@@ -1475,7 +1540,7 @@ function renderList(followFilter = false) {
   $('#companyList').innerHTML = state.filtered.map((c) => `
     <li class="${c.id === state.selectedId ? 'active' : ''}${c.active ? '' : ' is-inactive'}" data-id="${esc(c.id)}">
       ${swatch(c.label_color)}
-      <span class="no">${esc(c.company_no ?? '—')}</span>
+      <span class="no">${esc(c.company_no || '—')}</span>
       <span class="name">${esc(c.general.name_en || c.general.name_zh || '')}</span>
       ${statusPill(c)}
       ${warnCount(c) ? `<span class="pill warn" title="錯誤及警告">${warnCount(c)}</span>` : ''}
@@ -1508,7 +1573,7 @@ function renderCompany() {
       <div class="title">
         ${swatch(c.label_color, 'big')}
         <div>
-          <h2>${esc(c.company_no ?? '—')}　${esc(c.general.name_en || '')}</h2>
+          <h2>${esc(c.company_no || '—')}　${esc(c.general.name_en || '')}</h2>
           <div class="sub">${esc(c.general.name_zh || '')}</div>
         </div>
         ${c.active ? '' : `<span class="pill inactive">${esc(statusText(c))}</span>`}
@@ -1581,10 +1646,36 @@ async function loadDatabase() {
     state.data = data;
     state.source = { file: data.source?.file || '' };
     renderSourceBar();
-    showMessage('資料庫還沒有公司。請在上方選擇 Excel，或按「上載 Excel」。這是一次性匯入；匯入後可以直接改欄位，也可以新增 DIR、SH、Com Sec，以及把該筆資料標為 OUTDATED。');
+    showMessage('資料庫還沒有公司。按上方「新增公司」，或在「功能」裡匯入 Excel。匯入後可以直接改欄位，也可以新增 DIR、SH、Com Sec，以及把該筆資料標為 OUTDATED。');
     return;
   }
   setData(data, { file: data.source?.file || '', database: true });
+}
+
+async function addCompany() {
+  const company = await api('/api/companies', { method: 'POST' });
+  if (!state.data) {
+    state.data = {
+      companies: [],
+      summary: { companies: 0, issues: { error: 0, warning: 0, info: 0 } },
+      issues: [],
+      source: {},
+    };
+  }
+  state.data.companies.push(company);
+  state.data.summary = state.data.summary || { companies: 0, issues: { error: 0, warning: 0, info: 0 } };
+  state.data.summary.companies = state.data.companies.length;
+  state.selectedId = company.id;
+  filters.colors.add(colorKey(company));
+  filters.statuses.add(company.status || 'active');
+  filters.onlyIssues = false;
+  renderSourceBar();
+  renderFilterPanel();
+  renderList(true);
+  renderCompany();
+  document.querySelector('#companyList li.active')?.scrollIntoView({ block: 'nearest' });
+  const number = document.querySelector('[data-path="company_no"]');
+  if (number) number.focus();
 }
 
 async function importNamed(name, replace = false) {
@@ -1745,6 +1836,31 @@ function bindEvents() {
     applySidebar(collapsed);
     localStorage.setItem('cdd-viewer.sidebar', collapsed ? 'closed' : 'open');
   });
+  const actionMenu = $('#actionMenuList');
+  const actionMenuBtn = $('#actionMenuBtn');
+  const closeActionMenu = () => {
+    actionMenu.classList.add('hidden');
+    actionMenuBtn.setAttribute('aria-expanded', 'false');
+  };
+  actionMenuBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const open = actionMenu.classList.toggle('hidden') === false;
+    actionMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('#actionMenu')) closeActionMenu();
+    if (!event.target.closest('.company-find')) closeCompanyFind();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeActionMenu();
+  });
+  actionMenu.addEventListener('click', (event) => {
+    if (event.target.closest('select, input')) return;
+    if (event.target.closest('button, label.menu-item')) closeActionMenu();
+  });
+  $('#addCompany').addEventListener('click', () => {
+    addCompany().catch((err) => alert(err.message));
+  });
   $('#importFileBtn').addEventListener('click', async () => {
     const name = $('#fileSelect').value;
     if (!name) {
@@ -1782,6 +1898,40 @@ function bindEvents() {
   });
   $('#expandOutdated').addEventListener('change', () => state.data && renderCompany());
   $('#search').addEventListener('input', () => state.data && renderList(true));
+  const companyFind = $('#companyFind');
+  companyFind.addEventListener('input', () => renderCompanyFind());
+  companyFind.addEventListener('focus', () => renderCompanyFind());
+  companyFind.addEventListener('keydown', (event) => {
+    const buttons = [...$('#companyFindList').querySelectorAll('button')];
+    const current = buttons.findIndex((button) => button.classList.contains('active'));
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!buttons.length) return;
+      event.preventDefault();
+      const next = event.key === 'ArrowDown'
+        ? (current + 1) % buttons.length
+        : (current <= 0 ? buttons.length - 1 : current - 1);
+      buttons.forEach((button) => button.classList.remove('active'));
+      buttons[next].classList.add('active');
+      buttons[next].scrollIntoView({ block: 'nearest' });
+    } else if (event.key === 'Enter') {
+      const chosen = buttons[current] || buttons[0];
+      if (!chosen || $('#companyFindList').classList.contains('hidden')) return;
+      event.preventDefault();
+      chooseCompanyFind(chosen.dataset.companyId);
+    } else if (event.key === 'Escape') {
+      closeCompanyFind();
+    }
+  });
+  $('#companyFindList').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-company-id]');
+    if (!button) return;
+    chooseCompanyFind(button.dataset.companyId);
+  });
+  $('#systemLogBtn').addEventListener('click', () => {
+    const log = $('#systemLog');
+    const open = log.classList.toggle('hidden') === false;
+    $('#systemLogBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
   $('#filterPanel').addEventListener('change', (e) => state.data && onFilterChange(e));
   $('#filterPanel').addEventListener('click', (e) => {
     const rename = e.target.closest('.rename');
