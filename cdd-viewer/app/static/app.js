@@ -5016,8 +5016,8 @@ function bindExcelPane() {
   const apply = (collapsed) => {
     layout.classList.toggle('excel-collapsed', collapsed);
     toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    toggle.title = collapsed ? '展開 Excel' : '收起 Excel';
-    toggle.textContent = collapsed ? 'Excel' : '⟩';
+    toggle.title = collapsed ? '展開 Form fill' : '收起 Form fill';
+    toggle.textContent = collapsed ? 'Form fill' : '⟩';
   };
   apply(excelWindow ? false : localStorage.getItem('cdd-viewer.excel') !== 'open');
   toggle.addEventListener('click', () => {

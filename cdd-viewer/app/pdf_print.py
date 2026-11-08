@@ -72,7 +72,6 @@ def compose_pdf(source: str | Path | bytes, fields: list) -> bytes:
         crop_w, crop_h = float(crop.width), float(crop.height)
         rotation = int(page.rotation or 0) % 360
         widgets = [obj for obj, _kind in iter_widgets(page, crop_w, crop_h, rotation)]
-        texts = []
         for spec, widget in zip(specs, widgets):
             value = wanted.get((number, spec["id"]), "")
             if not value:
@@ -80,12 +79,7 @@ def compose_pdf(source: str | Path | bytes, fields: list) -> bytes:
             if spec["control"] == "checkbox":
                 _set_check(widget, value.casefold() in _CHECKED or value in _CHECKED)
                 continue
-            stamped = dict(spec)
-            stamped["_size"] = wanted.get((number, f"{spec['id']}:size"))
-            texts.append((stamped, value))
-            _show_widget_text(writer, widget, value, stamped.get("_size"))
-        if texts:
-            _stamp(writer, page, texts)
+            _show_widget_text(writer, widget, value, wanted.get((number, f"{spec['id']}:size")))
     _keep_appearances(writer)
     out = BytesIO()
     writer.write(out)
@@ -178,6 +172,7 @@ def _show_widget_text(writer: PdfWriter, widget, text: str, requested) -> None:
     data = b"" if contents is None else _color_before_text(contents.get_data())
     resources = cloned.get("/Resources")
     data = _isolate_font(resources, data)
+    data = _unicode_appearance(resources, data)
     form = DecodedStreamObject()
     form.set_data(data)
     form[NameObject("/Type")] = NameObject("/XObject")
@@ -299,6 +294,7 @@ def _attach_overlay(writer: PdfWriter, page, overlay, left: float, bottom: float
     data = b"" if contents is None else _color_before_text(contents.get_data())
     resources = cloned.get("/Resources")
     data = _isolate_font(resources, data)
+    data = _unicode_appearance(resources, data)
     form = DecodedStreamObject()
     form.set_data(data)
     form[NameObject("/Type")] = NameObject("/XObject")
@@ -404,6 +400,224 @@ def _keep_appearances(writer: PdfWriter) -> None:
         form.get_object()[NameObject("/NeedAppearances")] = BooleanObject(False)
     except Exception:
         return
+
+
+def _decode_literal(data: bytes) -> bytes:
+    out = bytearray()
+    index = 0
+    while index < len(data):
+        byte = data[index]
+        if byte != 0x5C:
+            out.append(byte)
+            index += 1
+            continue
+        index += 1
+        if index >= len(data):
+            break
+        escaped = data[index]
+        if escaped in b"01234567":
+            digits = bytes([escaped])
+            for _ in range(2):
+                if index + 1 < len(data) and data[index + 1] in b"01234567":
+                    index += 1
+                    digits += bytes([data[index]])
+                else:
+                    break
+            out.append(int(digits, 8) & 0xFF)
+        elif escaped == ord("n"):
+            out.append(10)
+        elif escaped == ord("r"):
+            out.append(13)
+        elif escaped == ord("t"):
+            out.append(9)
+        elif escaped == ord("b"):
+            out.append(8)
+        elif escaped == ord("f"):
+            out.append(12)
+        else:
+            out.append(escaped)
+        index += 1
+    return bytes(out)
+
+
+def _encode_literal(data: bytes) -> bytes:
+    out = bytearray()
+    for byte in data:
+        if byte in (0x28, 0x29, 0x5C):
+            out.extend((0x5C, byte))
+        else:
+            out.append(byte)
+    return bytes(out)
+
+
+def _parse_tounicode(data: bytes) -> dict[int, int]:
+    text = data.decode("latin1", errors="ignore")
+    found: dict[int, int] = {}
+    for block in re.finditer(r"beginbfchar(.*?)endbfchar", text, re.S):
+        for src, dst in re.findall(r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", block.group(1)):
+            if len(dst) == 4:
+                found[int(src, 16)] = int(dst, 16)
+    for block in re.finditer(r"beginbfrange(.*?)endbfrange", text, re.S):
+        body = block.group(1)
+        for src1, src2, dst in re.findall(
+            r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
+            body,
+        ):
+            if len(dst) != 4:
+                continue
+            start, end, base = int(src1, 16), int(src2, 16), int(dst, 16)
+            for offset, cid in enumerate(range(start, end + 1)):
+                found[cid] = (base + offset) & 0xFFFF
+    return found
+
+
+def _glyph_id(cmap: bytes, cid: int) -> int:
+    offset = cid * 2
+    if offset + 2 > len(cmap):
+        return 0
+    return int.from_bytes(cmap[offset:offset + 2], "big")
+
+
+def _parse_widths(values) -> dict[int, int]:
+    found: dict[int, int] = {}
+    items = list(values or [])
+    index = 0
+    while index < len(items):
+        first = int(items[index])
+        index += 1
+        if index >= len(items):
+            break
+        nxt = items[index]
+        index += 1
+        if isinstance(nxt, ArrayObject) or str(type(nxt)).endswith("ArrayObject'>"):
+            for offset, width in enumerate(nxt):
+                found[first + offset] = int(width)
+            continue
+        if index >= len(items):
+            break
+        last = int(nxt)
+        width = int(items[index])
+        index += 1
+        for cid in range(first, last + 1):
+            found[cid] = width
+    return found
+
+
+def _tounicode_stream(codes: dict[int, int]) -> bytes:
+    pairs = sorted((cid, cid) for cid in codes if 0 <= cid <= 0xFFFF)
+    chunks = []
+    for start in range(0, len(pairs), 100):
+        group = pairs[start:start + 100]
+        body = "\n".join(f"<{cid:04X}> <{uni:04X}>" for cid, uni in group)
+        chunks.append(f"{len(group)} beginbfchar\n{body}\nendbfchar")
+    body = "\n".join(chunks) or "0 beginbfchar\nendbfchar"
+    return (
+        "/CIDInit /ProcSet findresource begin\n"
+        "12 dict begin\n"
+        "begincmap\n"
+        "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> def\n"
+        "/CMapName /Adobe-Identity-UCS def\n"
+        "/CMapType 2 def\n"
+        "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n"
+        f"{body}\n"
+        "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n"
+    ).encode("ascii")
+
+
+def _rewrite_shown_text(data: bytes, codes: dict[int, int], glyphs: bytes, used: dict[int, int]) -> bytes:
+    def convert(raw: bytes) -> bytes:
+        if len(raw) < 2 or len(raw) % 2:
+            return raw
+        out = bytearray()
+        changed = False
+        for index in range(0, len(raw), 2):
+            cid = int.from_bytes(raw[index:index + 2], "big")
+            uni = codes.get(cid)
+            if uni is None:
+                out.extend(raw[index:index + 2])
+                continue
+            changed = True
+            used[uni] = _glyph_id(glyphs, cid)
+            out.extend(uni.to_bytes(2, "big"))
+        return bytes(out) if changed else raw
+
+    def replace_literal(match: re.Match) -> bytes:
+        raw = _decode_literal(match.group(1))
+        updated = convert(raw)
+        if updated == raw:
+            return match.group(0)
+        return b"(" + _encode_literal(updated) + b")" + match.group(2)
+
+    pattern = re.compile(rb"\(((?:\\.|[^\\)])*)\)(\s*Tj)")
+    return pattern.sub(replace_literal, data)
+
+
+def _unicode_appearance(resources, data: bytes) -> bytes:
+    """Adobe paints subset character ids as the wrong glyphs. Use the real Unicode values."""
+    if resources is None or not data:
+        return data
+    try:
+        fonts = resources.get_object().get("/Font")
+        if fonts is None:
+            return data
+        fonts = fonts.get_object()
+    except Exception:
+        return data
+    for ref in fonts.values():
+        try:
+            font = ref.get_object()
+        except Exception:
+            continue
+        if str(font.get("/Subtype") or "") != "/Type0":
+            continue
+        descendants = font.get("/DescendantFonts")
+        tounicode = font.get("/ToUnicode")
+        if not descendants or tounicode is None:
+            continue
+        try:
+            cid = descendants[0].get_object()
+            codes = _parse_tounicode(tounicode.get_object().get_data())
+            gid_map = cid.get("/CIDToGIDMap")
+            glyphs = b"" if gid_map is None or str(gid_map) == "/Identity" else gid_map.get_object().get_data()
+        except Exception:
+            continue
+        if not codes:
+            continue
+        used: dict[int, int] = {}
+        updated = _rewrite_shown_text(data, codes, glyphs, used)
+        if not used or gid_map is None or str(gid_map) == "/Identity":
+            continue
+        table = bytearray(131072)
+        for uni, gid in used.items():
+            if 0 <= uni < 65536:
+                table[uni * 2:uni * 2 + 2] = int(gid).to_bytes(2, "big")
+        try:
+            gid_map.get_object().set_data(bytes(table))
+            tounicode.get_object().set_data(_tounicode_stream(used))
+        except Exception:
+            continue
+        try:
+            info = cid.get("/CIDSystemInfo")
+            if info is not None:
+                info = info.get_object()
+                info[NameObject("/Ordering")] = create_string_object("Identity")
+                info[NameObject("/Registry")] = create_string_object("Adobe")
+        except Exception:
+            pass
+        try:
+            old_widths = _parse_widths(cid.get("/W"))
+            widths = ArrayObject()
+            for cid_num, uni in codes.items():
+                if uni not in used or cid_num not in old_widths:
+                    continue
+                widths.append(NumberObject(uni))
+                widths.append(ArrayObject([NumberObject(old_widths[cid_num])]))
+            if widths:
+                cid[NameObject("/W")] = widths
+        except Exception:
+            pass
+        data = updated
+    return data
 
 
 def _isolate_font(resources, data: bytes) -> bytes:

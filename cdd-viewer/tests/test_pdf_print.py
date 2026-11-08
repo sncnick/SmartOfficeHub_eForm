@@ -87,10 +87,18 @@ class PdfPrintTests(unittest.TestCase):
         self.assertEqual(str(widget.get("/V")), "測試地址")
         appearance = widget["/AP"]["/N"].get_object()
         stream = appearance.get_data()
-        self.assertIn(b"/CDDF1", stream)
+        self.assertIn("測試".encode("utf-16-be"), stream)
+        self.assertIn("地址".encode("utf-16-be"), stream)
         self.assertNotIn(b"/F1 ", stream)
         font = appearance["/Resources"]["/Font"]["/CDDF1"].get_object()
         cid = font["/DescendantFonts"][0].get_object()
+        gid_map = cid["/CIDToGIDMap"].get_object().get_data()
+
+        def glyph(code: int) -> int:
+            return int.from_bytes(gid_map[code * 2:code * 2 + 2], "big")
+
+        self.assertGreater(glyph(0x5730), 0)
+        self.assertGreater(glyph(0x5740), 0)
         embedded = cid["/FontDescriptor"].get_object()["/FontFile2"].get_object().get_data()
         self.assertTrue(embedded.startswith(b"\x00\x01\x00\x00"))
         form = reader.trailer["/Root"]["/AcroForm"].get_object()
