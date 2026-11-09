@@ -2687,7 +2687,7 @@ function ensureExcelMapMenu() {
     if (!input || !excelMapMenu._wordField) return;
     excelMapMenu._wordQuery = input.value;
     excelMapMenu._wordCaret = input.selectionStart;
-    fillExcelMapMenu(null, searchWordFields(input.value), excelMapMenu._wordAnchor, false);
+    fillExcelMapMenu(null, mappingCatalog(), excelMapMenu._wordAnchor, false);
   });
   excelMapMenu.addEventListener('keydown', (event) => {
     if (event.target.closest('.word-map-query')) {
@@ -2810,14 +2810,16 @@ function onMapMenuKey(event) {
 function placeExcelMapMenu(anchor) {
   const menu = ensureExcelMapMenu();
   const rect = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
-  const width = Math.max(rect.width || 0, 240);
-  const height = Math.min(menu.offsetHeight || 240, 320);
+  const width = Math.max(rect.width || 0, 280);
+  const spaceBelow = Math.max(160, window.innerHeight - (rect.bottom || 0) - 12);
+  const spaceAbove = Math.max(160, (rect.top || 0) - 12);
+  const below = spaceBelow >= spaceAbove;
+  const maxHeight = Math.min(Math.round(window.innerHeight * 0.75), below ? spaceBelow : spaceAbove);
+  menu.style.maxHeight = `${Math.round(maxHeight)}px`;
   let left = rect.left;
   if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
   if (left < 8) left = 8;
-  let top = rect.bottom + 2;
-  if (top + height > window.innerHeight - 8 && rect.top > height + 8) top = rect.top - height - 2;
-  if (top < 8) top = 8;
+  const top = below ? (rect.bottom || 0) + 2 : Math.max(8, (rect.top || 0) - maxHeight - 2);
   menu.style.left = `${Math.round(left)}px`;
   menu.style.top = `${Math.round(top)}px`;
   menu.style.width = `${Math.round(width)}px`;
@@ -2880,9 +2882,7 @@ function fillExcelMapMenu(cell, fields, anchor, includeConvert) {
       + `<span class="excel-map-choice-line">${box}<span>${esc(field.group || '')} ${esc(field.label)}</span></span>`
       + `<span class="key">${esc(live || '（沒有資料）')}</span></button>`;
   }).join('');
-  const search = menu._wordField
-    ? `<div class="word-map-search"><input type="search" class="word-map-query" placeholder="搜尋參數" value="${esc(menu._wordQuery || '')}" autocomplete="off" aria-label="搜尋參數"></div>`
-    : '';
+  const search = '';
   menu.innerHTML = search + mapActionHtml(cell, includeConvert)
     + (options || '<div class="excel-map-empty">沒有相符欄位</div>');
   const buttons = [...menu.querySelectorAll('button')];
@@ -2904,21 +2904,17 @@ function fillExcelMapMenu(cell, fields, anchor, includeConvert) {
 
 function showExcelMapMenu(input) {
   const cell = input.closest('td');
-  const owners = (cell?.dataset.excelOwners || '').split(',').filter(Boolean);
-  const fields = suggestExcelFields(input.value, owners).slice(0, 12);
   const menu = ensureExcelMapMenu();
   menu._input = input;
-  fillExcelMapMenu(cell, fields, input, false);
+  fillExcelMapMenu(cell, mappingCatalog(), input, false);
 }
 
 function openCellMenu(td, anchor) {
   closeExcelMapMenu();
-  const owners = (td.dataset.excelOwners || '').split(',').filter(Boolean);
-  const fields = suggestExcelFields('', owners).slice(0, 12);
   const menu = ensureExcelMapMenu();
   menu._input = null;
   menu._browserMark = { row: td.dataset.excelRow, col: td.dataset.excelCol, scope: 'cell' };
-  fillExcelMapMenu(td, fields, anchor || td, true);
+  fillExcelMapMenu(td, mappingCatalog(), anchor || td, true);
   menu.focus({ preventScroll: true });
 }
 
@@ -4109,22 +4105,26 @@ function wordFieldCount(block) {
   return (block.items || []).filter((item) => item.type === 'field').length;
 }
 
-function wordFieldCatalog() {
+function mappingCatalog() {
   const owners = ['company', 'RO', 'SHARES'];
   const company = selectedCompany();
-  const addParty = (list, prefix) => {
-    (list || []).forEach((party, index) => {
-      const canon = canonExcelOwner(party.label || party.label_raw || '') || `${prefix}${index + 1}`;
-      if (!owners.includes(canon)) owners.push(canon);
+  const addOwner = (canon) => {
+    if (canon && !owners.includes(canon)) owners.push(canon);
+  };
+  const addPeople = (list, prefix) => {
+    (list || []).forEach((item, index) => {
+      addOwner(canonExcelOwner(item.label || item.label_raw || '') || `${prefix}${index + 1}`);
     });
   };
   if (company) {
-    addParty(company.directors, 'DIR');
-    addParty(company.shareholders, 'SH');
-    addParty(company.company_secretaries, 'CS');
-  } else {
-    ['DIR1', 'SH1', 'CS1'].forEach((owner) => owners.push(owner));
+    addPeople(company.directors, 'DIR');
+    addPeople(company.shareholders, 'SH');
+    addPeople(company.company_secretaries, 'CS');
+    (company.branches || []).forEach((branch, index) => {
+      addOwner(canonExcelOwner(branch.label || '') || `BR${String(index + 1).padStart(3, '0')}`);
+    });
   }
+  ['DIR1', 'SH1', 'CS1', 'BR001'].forEach(addOwner);
   const seen = new Set();
   const pool = [];
   owners.forEach((owner) => {
@@ -4135,21 +4135,6 @@ function wordFieldCatalog() {
     });
   });
   return pool;
-}
-
-function searchWordFields(query) {
-  const pool = wordFieldCatalog();
-  const words = String(query || '')
-    .trim()
-    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
-    .replace(/[._]+/g, ' ')
-    .split(/\s+/)
-    .filter((part) => part.length > 1 || /[^\u0000-\u007f]/.test(part));
-  if (!words.length) return pool.slice(0, 80);
-  return pool.filter((spec) => {
-    const hay = `${spec.group} ${spec.label} ${spec.key}`.toLowerCase();
-    return words.every((word) => hay.includes(word.toLowerCase()));
-  }).slice(0, 80);
 }
 
 function openWordField(node) {
@@ -4164,7 +4149,7 @@ function openWordField(node) {
   menu._input = null;
   menu._browserMark = null;
   menu._includeConvert = false;
-  fillExcelMapMenu(null, searchWordFields(''), node, false);
+  fillExcelMapMenu(null, mappingCatalog(), node, false);
 }
 
 async function loadLaidDocument(kind) {
