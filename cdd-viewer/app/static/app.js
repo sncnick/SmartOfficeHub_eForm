@@ -2547,6 +2547,10 @@ function refreshLaidForm() {
   const file = $('#excelFile')?.value || '';
   const doc = wordView?.doc;
   if (!doc?.pages?.length || !(isWordFile(file) || isPdfFile(file))) return;
+  if (doc.kind === 'pdf' && doc.render === 'browser') {
+    applyBrowserPdfValues();
+    return;
+  }
   if (doc.file && doc.file !== file) return;
   const scroll = $('#excelScroll');
   if (!scroll || document.activeElement?.closest?.('#excelScroll')) return;
@@ -2847,14 +2851,14 @@ function chooseMapButton(button) {
     if (button.hasAttribute('data-map-lock')) {
       toggleWordOriginal(word.file, word.id);
       closeExcelMapMenu();
-      if (wordView.doc) renderWordPage(wordView.doc, wordView.page);
+      showLaidMapping();
       return;
     }
     if (button.hasAttribute('data-map-free')) {
       const prev = wordFieldRecord(word.file, word.id);
       saveWordFieldMap(word.file, word.id, freeTextField(prev?.kind === 'free' ? prev.text : ''));
       closeExcelMapMenu();
-      if (wordView.doc) renderWordPage(wordView.doc, wordView.page);
+      showLaidMapping();
       return;
     }
     if (button.dataset.mapIndex == null) return;
@@ -2862,7 +2866,7 @@ function chooseMapButton(button) {
     if (!field) return;
     saveWordFieldMap(word.file, word.id, field);
     closeExcelMapMenu();
-    if (wordView.doc) renderWordPage(wordView.doc, wordView.page);
+    showLaidMapping();
     return;
   }
   const cell = mapMenuCell();
@@ -4160,7 +4164,325 @@ function wordHitHtml(field, page) {
   return `<${tag} class="word-hit${mode}" title="${esc(title)}" style="${place}" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}"${control}>${tags}${shown}</${tag}>`;
 }
 
+function xfaFieldId(name) {
+  const text = String(name || '').trim();
+  const body = text.replace(/[^A-Za-z0-9._-]/g, '').replace(/^\.+|\.+$/g, '');
+  if (body && `pdf-${body}`.length <= 120) return `pdf-${body}`;
+  let hash = 2166136261;
+  for (const char of text || 'field') {
+    hash ^= char.codePointAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `pdf-${(hash >>> 0).toString(16)}`;
+}
+
+function offsetWithin(node, ancestor) {
+  const zoom = Number.parseFloat(node.closest('.word-sheet')?.style.zoom || '') || 1;
+  const base = ancestor.getBoundingClientRect();
+  const box = node.getBoundingClientRect();
+  return {
+    x: (box.left - base.left) / zoom,
+    y: (box.top - base.top) / zoom,
+  };
+}
+
+function placeBrowserPdfTag(node, text) {
+  const layer = node.closest('.xfaLayer');
+  if (!layer) return;
+  const id = node.dataset.wordField;
+  let tag = layer.querySelector(`.pdf-map-tag[data-for="${CSS.escape(id)}"]`);
+  if (!text) {
+    tag?.remove();
+    return;
+  }
+  if (!tag) {
+    tag = document.createElement('span');
+    tag.className = 'form-fill-tag pdf-map-tag';
+    tag.dataset.for = id;
+    layer.append(tag);
+  }
+  tag.textContent = text;
+  const box = offsetWithin(node.closest('.xfaWrapper') || node, layer);
+  tag.style.left = `${box.x}px`;
+  tag.style.top = `${box.y}px`;
+}
+
+function revealBrowserPdfText(control, box) {
+  if (!control || control.type === 'checkbox' || control.type === 'radio' || control.type === 'button') return;
+  const host = box || control.closest('.xfaWrapper');
+  if (!host) return;
+  const text = control.tagName === 'SELECT'
+    ? (control.options?.[control.selectedIndex]?.text || control.value || '')
+    : (control.value || '');
+  let view = [...host.children].find((child) => child.classList.contains('pdf-field-value'));
+  if (!text) {
+    view?.remove();
+    control.style.color = '#111';
+    control.style.webkitTextFillColor = '#111';
+    return;
+  }
+  if (!view) {
+    view = document.createElement('div');
+    view.className = 'pdf-field-value';
+    host.append(view);
+  }
+  const height = Number.parseFloat(host.style.height || '');
+  const multi = control.tagName === 'TEXTAREA' || text.includes('\n') || (Number.isFinite(height) && height > 28);
+  const size = multi || !Number.isFinite(height) ? 11 : Math.max(9, Math.min(12, Math.floor(height * 0.72)));
+  view.textContent = text;
+  view.style.alignItems = multi ? 'flex-start' : 'center';
+  view.style.whiteSpace = multi ? 'pre-wrap' : 'pre';
+  view.style.fontSize = `${size}px`;
+  view.style.lineHeight = multi ? '1.25' : '1';
+  control.style.color = 'transparent';
+  control.style.webkitTextFillColor = 'transparent';
+}
+
+function applyBrowserPdfField(node, file) {
+  const mapped = wordFieldMap(file, node.dataset.wordField);
+  const checkbox = node.dataset.wordControl === 'checkbox';
+  if (mapped && checkbox) node.checked = mappedCheckboxOn(mapped);
+  else if (mapped?.kind === 'free') node.value = mapped.text || '';
+  else if (mapped) node.value = companyFieldText(mapped.key) || '';
+  else if (node.classList.contains('pdf-mapped')) {
+    if (checkbox) node.checked = false;
+    else node.value = '';
+  }
+  node.classList.toggle('pdf-mapped', Boolean(mapped));
+  hatchBrowserPdfField(node);
+  revealBrowserPdfText(node, node.closest('.xfaWrapper'));
+  placeBrowserPdfTag(node, mapped ? fieldDisplayName(mapped) : '');
+}
+
+function hatchBrowserPdfField(node) {
+  const wrap = node.closest('.xfaWrapper');
+  if (!wrap) return;
+  const on = [...wrap.querySelectorAll('[data-word-field]')].some((item) => item.classList.contains('pdf-mapped'));
+  wrap.classList.toggle('pdf-mapped', on);
+}
+
+function browserXfaPath(node) {
+  const names = [];
+  const group = node.closest('.xfaExclgroup');
+  let current = group || node.closest('.xfaField, .xfaSubform');
+  while (current) {
+    const name = current.getAttribute('xfaName');
+    if (name) names.push(name);
+    const parent = current.parentElement;
+    current = parent ? parent.closest('.xfaSubform') : null;
+  }
+  return names.reverse().join('.');
+}
+
+function applyBrowserPdfValues() {
+  const file = $('#excelFile')?.value || '';
+  document.querySelectorAll('#excelScroll .pdf-browser [data-word-field]').forEach((node) => {
+    applyBrowserPdfField(node, file);
+  });
+}
+
+function browserPdfBoxSized(value) {
+  return Boolean(value) && value !== 'auto' && value !== '0px' && value !== '0%';
+}
+
+function fitBrowserPdfBoxes(layer) {
+  layer.querySelectorAll('.xfaWrapper').forEach((box) => {
+    const inner = [...box.children].find((child) => child.classList.contains('xfaWrapped'));
+    if (!inner) return;
+    const field = inner.classList.contains('xfaField') || inner.classList.contains('xfaExclgroup');
+    const wide = browserPdfBoxSized(box.style.width);
+    const high = browserPdfBoxSized(box.style.height);
+    if (field && box.style.position === 'absolute' && (!wide || !high)) {
+      box.style.display = 'none';
+      return;
+    }
+    if (!wide && !high) return;
+    if (wide) inner.style.width = '100%';
+    if (high) inner.style.height = '100%';
+    inner.style.maxWidth = '100%';
+    inner.style.overflow = 'visible';
+    inner.querySelectorAll('.xfaLabel').forEach((label) => {
+      if (wide) label.style.width = '100%';
+      if (high) label.style.height = '100%';
+      label.style.maxWidth = '100%';
+    });
+    inner.querySelectorAll('input, textarea, select').forEach((control) => {
+      if (control.type === 'checkbox' || control.type === 'radio' || control.type === 'button') return;
+      const siblings = control.parentElement ? [...control.parentElement.children] : [];
+      const besideCaption = siblings.some((child) => child !== control && (child.classList.contains('xfaCaption') || child.classList.contains('xfaCaptionForCheckButton')));
+      control.style.margin = '0';
+      control.style.maxWidth = '100%';
+      if (high) {
+        control.style.height = '100%';
+        control.style.maxHeight = '100%';
+      }
+      revealBrowserPdfText(control, box);
+      if (besideCaption) {
+        control.style.flex = '1 1 0';
+        control.style.width = 'auto';
+        control.style.minWidth = '0';
+      } else if (wide) {
+        control.style.width = '100%';
+      }
+    });
+  });
+}
+
+function browserPdfMappable(node) {
+  if (!node || node.disabled) return false;
+  if (node.type === 'button' || node.type === 'submit' || node.type === 'reset' || node.type === 'hidden') return false;
+  const host = node.closest('.xfaField, .xfaExclgroup');
+  if (!host || host.closest('.xfaPrintOnly')) return false;
+  if (host.classList.contains('xfaNonInteractive') || host.classList.contains('xfaDisabled') || host.classList.contains('xfaPrintOnly')) return false;
+  const box = host.closest('.xfaWrapper');
+  if (!box || box.style.display === 'none' || box.hidden) return false;
+  const view = getComputedStyle(host);
+  if (view.display === 'none' || view.visibility === 'hidden') return false;
+  const rect = box.getBoundingClientRect();
+  return rect.width >= 4 && rect.height >= 4;
+}
+
+function bindBrowserPdfFields(layer) {
+  const page = layer.closest('[data-page]')?.dataset.page || '1';
+  const used = new Set();
+  layer.querySelectorAll('input, textarea, select').forEach((node) => {
+    if (!browserPdfMappable(node)) return;
+    const host = node.closest('.xfaField, .xfaExclgroup');
+    const xfaName = host?.getAttribute('xfaName') || '';
+    const fieldId = node.getAttribute('fieldId') || host?.getAttribute('data-element-id') || '';
+    const on = node.getAttribute('xfaOn') || '';
+    const checkbox = node.type === 'checkbox' || node.type === 'radio';
+    const raw = [page, fieldId, xfaName, on].filter(Boolean).join('.');
+    const base = xfaFieldId(raw || `field.${page}`);
+    let id = base;
+    let extra = 2;
+    while (used.has(id)) {
+      const suffix = `-${extra}`;
+      id = `${base.slice(0, 120 - suffix.length)}${suffix}`;
+      extra += 1;
+    }
+    used.add(id);
+    node.dataset.wordField = id;
+    node.dataset.xfaPath = browserXfaPath(node);
+    node.dataset.wordParam = on ? `${xfaName || '欄位'} · ${on}` : (xfaName || '欄位');
+    if (checkbox) node.dataset.wordControl = 'checkbox';
+    else node.readOnly = true;
+    applyBrowserPdfField(node, $('#excelFile').value);
+  });
+}
+
+function showLaidMapping() {
+  if (wordView.doc?.render === 'browser') {
+    applyBrowserPdfValues();
+    return;
+  }
+  if (wordView.doc) renderWordPage(wordView.doc, wordView.page);
+}
+
+let pdfjsLib = null;
+
+async function loadPdfjs() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import('/static/pdfjs/pdf.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdfjs/pdf.worker.mjs?v=20261110s';
+  }
+  return pdfjsLib;
+}
+
+async function renderBrowserPdf(doc) {
+  const scroll = $('#excelScroll');
+  const file = $('#excelFile').value;
+  const token = `${file}\t${doc.asset || ''}`;
+  wordView.browserToken = token;
+  wordView.browserTask?.destroy?.();
+  wordView.browserTask = null;
+  scroll.innerHTML = '';
+  $('#excelMeta').textContent = `${file}　正在用瀏覽器顯示原本的 PDF…`;
+  const pager = document.querySelector('.excel-pager');
+  if (pager) pager.hidden = true;
+  $('#excelSplit').disabled = true;
+  $('#excelLm').disabled = true;
+  try {
+    const lib = await loadPdfjs();
+    if (wordView.browserToken !== token) return;
+    const task = lib.getDocument({
+      url: `/api/pdf/file?file=${encodeURIComponent(file)}&v=${encodeURIComponent(doc.asset || '')}`,
+      enableXfa: true,
+      disableRange: true,
+      disableStream: true,
+    });
+    wordView.browserTask = task;
+    const pdf = await task.promise;
+    if (wordView.browserToken !== token) {
+      pdf.destroy?.();
+      return;
+    }
+    const linkService = {
+      addLinkAttributes(anchor, href) {
+        if (href) anchor.href = href;
+      },
+    };
+    for (let number = 1; number <= pdf.numPages; number += 1) {
+      if (wordView.browserToken !== token) return;
+      const page = await pdf.getPage(number);
+      const xfaHtml = page.isPureXfa ? await page.getXfa() : null;
+      const sheet = document.createElement('article');
+      sheet.className = 'word-doc word-sheet pdf-browser';
+      sheet.dataset.page = String(number);
+      if (xfaHtml) {
+        const viewport = lib.getXfaPageViewport(xfaHtml, { scale: 1 });
+        sheet.style.width = `${viewport.width}px`;
+        sheet.style.height = `${viewport.height}px`;
+        const layer = document.createElement('div');
+        sheet.append(layer);
+        scroll.append(sheet);
+        lib.XfaLayer.render({
+          viewport: viewport.clone({ dontFlip: true }),
+          div: layer,
+          xfaHtml,
+          annotationStorage: pdf.annotationStorage,
+          linkService,
+        });
+        fitBrowserPdfBoxes(layer);
+        bindBrowserPdfFields(layer);
+      } else {
+        const viewport = page.getViewport({ scale: 96 / 72 });
+        sheet.style.width = `${viewport.width}px`;
+        sheet.style.height = `${viewport.height}px`;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        sheet.append(canvas);
+        scroll.append(sheet);
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      }
+    }
+    if (wordView.browserToken !== token) return;
+    const select = $('#excelSheet');
+    if (select) {
+      fillingSheets = true;
+      select.innerHTML = Array.from({ length: pdf.numPages }, (_, index) => {
+        const n = index + 1;
+        return `<option value="${n}">第 ${n} 頁</option>`;
+      }).join('');
+      select.value = '1';
+      fillingSheets = false;
+    }
+    $('#excelMeta').textContent = `${file}　共 ${pdf.numPages} 頁。點欄位即可對應公司資料。`;
+    $('#excelPage').textContent = '';
+    applyPdfZoom();
+  } catch (err) {
+    if (wordView.browserToken !== token) return;
+    scroll.innerHTML = '';
+    $('#excelMeta').textContent = `${file}　瀏覽器無法顯示這份 PDF。`;
+  }
+}
+
 function renderWordPage(doc, pageNumber) {
+  if (doc?.kind === 'pdf' && doc.render === 'browser') {
+    renderBrowserPdf(doc);
+    return;
+  }
   if (excelForm && (doc.pages || []).length) {
     renderWordFile(doc, pageNumber);
     return;
@@ -4334,7 +4656,7 @@ function fieldNodeText(node) {
 
 function pdfPrintFields() {
   fitPdfFieldText();
-  return [...document.querySelectorAll('#excelScroll .word-hit.filled, #excelScroll .word-hit.free, #excelScroll .word-hit.tick-set')].map((node) => {
+  const laid = [...document.querySelectorAll('#excelScroll .word-hit.filled, #excelScroll .word-hit.free, #excelScroll .word-hit.tick-set')].map((node) => {
     const page = node.closest('[data-page]');
     if (!page || !node.dataset.wordField) return null;
     if (node.classList.contains('tick-field')) {
@@ -4357,6 +4679,22 @@ function pdfPrintFields() {
       size: Number.isFinite(size) ? size : 0,
     };
   }).filter(Boolean);
+  const browser = [...document.querySelectorAll('#excelScroll .pdf-browser [data-word-field].pdf-mapped')].map((node) => {
+    const page = node.closest('[data-page]');
+    if (!page) return null;
+    const checkbox = node.dataset.wordControl === 'checkbox';
+    if (checkbox && !node.checked) return null;
+    const name = node.dataset.xfaPath || '';
+    const text = checkbox ? (node.getAttribute('xfaOn') || '1') : (node.value || '');
+    if (!name || !String(text).trim()) return null;
+    return {
+      page: Number(page.dataset.page),
+      id: node.dataset.wordField,
+      name,
+      text,
+    };
+  }).filter(Boolean);
+  return laid.concat(browser);
 }
 
 let pdfPrintWindow = null;
@@ -5661,6 +5999,7 @@ function bindExcelPane() {
     const wordField = event.target.closest('[data-word-field]');
     if (wordField) {
       if (event.target.closest('.form-free')) return;
+      if (wordField.closest('.pdf-browser')) event.preventDefault();
       if (!excelForm) openWordField(wordField);
       return;
     }

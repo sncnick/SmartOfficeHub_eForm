@@ -2,14 +2,24 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import zlib
 from io import BytesIO
 from pathlib import Path
 
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import (
+    ArrayObject,
+    DecodedStreamObject,
+    DictionaryObject,
+    EncodedStreamObject,
+    NameObject,
+    NumberObject,
+    TextStringObject,
+)
 
 from app.pdf_preview import _to_top_left
 from app.pdf_print import _from_top_left, compose_pdf
-from tests.test_pdf_preview import _luma, _pdf
+from tests.test_pdf_preview import _luma, _pdf, _xfa_pdf
 
 
 def _bar_pdf() -> bytes:
@@ -103,6 +113,97 @@ class PdfPrintTests(unittest.TestCase):
         self.assertTrue(embedded.startswith(b"\x00\x01\x00\x00"))
         form = reader.trailer["/Root"]["/AcroForm"].get_object()
         self.assertFalse(form["/NeedAppearances"].value)
+
+    def test_browser_values_are_written_into_the_form_data(self):
+        template = (
+            b'<?xml version="1.0"?>'
+            b'<template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">'
+            b'<subform name="form1"><pageSet><pageArea><contentArea/></pageArea></pageSet>'
+            b'<field name="BusinessName"><ui><textEdit/></ui></field></subform></template>'
+        )
+        datasets = (
+            b'<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">'
+            b'<xfa:data><form1><BusinessName></BusinessName></form1></xfa:data></xfa:datasets>'
+        )
+        raw = _xfa_pdf(template, extra=[("datasets", datasets)])
+        printed = compose_pdf(raw, [{
+            "page": 1,
+            "id": "pdf-1.field1.BusinessName",
+            "name": "form1.BusinessName",
+            "text": "Acme",
+        }])
+        xfa = PdfReader(BytesIO(printed)).trailer["/Root"]["/AcroForm"].get_object()["/XFA"]
+        saved = list(xfa)[3].get_object().get_data()
+        self.assertIn(b"Acme", saved)
+        self.assertNotIn(b"<?xml", saved)
+
+    def test_a_filtered_dataset_can_still_be_saved(self):
+        datasets = (
+            b'<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">'
+            b'<xfa:data><form1><BusinessName></BusinessName></form1></xfa:data></xfa:datasets>'
+        )
+        template = (
+            b'<?xml version="1.0"?>'
+            b'<template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">'
+            b'<subform name="form1"><pageSet><pageArea><contentArea/></pageArea></pageSet>'
+            b'<field name="BusinessName"><ui><textEdit/></ui></field></subform></template>'
+        )
+        writer = PdfWriter()
+        writer.add_blank_page(width=595, height=842)
+        warning = DecodedStreamObject()
+        warning.set_data(b"BT /F1 12 Tf 72 720 Td (The document you are trying to load requires Adobe Reader 8 or higher) Tj ET")
+        writer.pages[0][NameObject("/Contents")] = writer._add_object(warning)
+        compressed = zlib.compress(datasets)
+        dataset = EncodedStreamObject()
+        dataset[NameObject("/Filter")] = ArrayObject([NameObject("/FlateDecode")])
+        dataset._data = compressed
+        dataset[NameObject("/Length")] = NumberObject(len(compressed))
+        template_stream = DecodedStreamObject()
+        template_stream.set_data(template)
+        array = ArrayObject([
+            TextStringObject("template"),
+            writer._add_object(template_stream),
+            TextStringObject("datasets"),
+            writer._add_object(dataset),
+        ])
+        form = DictionaryObject({NameObject("/XFA"): array})
+        writer._root_object[NameObject("/AcroForm")] = form
+        raw = BytesIO()
+        writer.write(raw)
+        printed = compose_pdf(raw.getvalue(), [{
+            "page": 1,
+            "id": "pdf-1.field1.BusinessName",
+            "name": "form1.BusinessName",
+            "text": "Acme",
+        }])
+        xfa = PdfReader(BytesIO(printed)).trailer["/Root"]["/AcroForm"].get_object()["/XFA"]
+        saved = list(xfa)[3].get_object().get_data()
+        self.assertIn(b"Acme", saved)
+        self.assertNotIn(b"<?xml", saved)
+
+    def test_utf16_form_data_keeps_its_encoding_and_has_no_extra_header(self):
+        datasets = (
+            "<xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\">"
+            "<xfa:data><form1><BusinessName></BusinessName></form1></xfa:data></xfa:datasets>"
+        ).encode("utf-16")
+        template = (
+            b'<?xml version="1.0"?>'
+            b'<template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">'
+            b'<subform name="form1"><pageSet><pageArea><contentArea/></pageArea></pageSet>'
+            b'<field name="BusinessName"><ui><textEdit/></ui></field></subform></template>'
+        )
+        raw = _xfa_pdf(template, extra=[("datasets", datasets)])
+        printed = compose_pdf(raw, [{
+            "page": 1,
+            "id": "pdf-1.field1.BusinessName",
+            "name": "form1.BusinessName",
+            "text": "Acme",
+        }])
+        xfa = PdfReader(BytesIO(printed)).trailer["/Root"]["/AcroForm"].get_object()["/XFA"]
+        saved = list(xfa)[3].get_object().get_data()
+        text = saved.decode("utf-16")
+        self.assertIn("Acme", text)
+        self.assertNotIn("<?xml", text)
 
 
 if __name__ == "__main__":

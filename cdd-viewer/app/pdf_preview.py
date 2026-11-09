@@ -17,6 +17,8 @@ from pathlib import Path
 from pypdf import PdfReader
 from pypdf.errors import DependencyError, PdfReadError
 
+from .pdf_xfa import needs_browser_pdf
+
 _LOCK = threading.Lock()
 _CACHE: dict[str, dict] = {}
 _PUSHBUTTON = 1 << 16
@@ -31,17 +33,16 @@ def preview_pdf(source: str | Path | bytes) -> dict:
     with _LOCK:
         cached = _CACHE.get(key)
         if cached is None:
-            cached = _read(raw)
-            cached["raw"] = raw
-            cached["pngs"] = {}
+            cached = _remember(raw)
             _CACHE.clear()
             _CACHE[key] = cached
         pages = cached["pages"]
         asset = cached["asset"]
+        mode = cached.get("render") or "page"
     return {
         "file": Path(source).name if not isinstance(source, bytes) else "",
         "kind": "pdf",
-        "render": "page",
+        "render": mode,
         "page_count": len(pages),
         "pages": pages,
         "unplaced": [],
@@ -54,9 +55,7 @@ def page_png(source: str | Path | bytes, number: int) -> bytes:
     with _LOCK:
         cached = _CACHE.get(key)
         if cached is None:
-            cached = _read(raw)
-            cached["raw"] = raw
-            cached["pngs"] = {}
+            cached = _remember(raw)
             _CACHE.clear()
             _CACHE[key] = cached
         stored = cached["pngs"].get(number)
@@ -66,6 +65,14 @@ def page_png(source: str | Path | bytes, number: int) -> bytes:
             stored = _render_page(cached["raw"], number)
             cached["pngs"][number] = stored
         return stored
+
+
+def _remember(raw: bytes) -> dict:
+    cached = _read(raw)
+    pngs = cached.pop("xfa_pngs", {})
+    cached["raw"] = raw
+    cached["pngs"] = pngs
+    return cached
 
 
 def open_reader(raw: bytes) -> PdfReader:
@@ -90,6 +97,7 @@ def open_reader(raw: bytes) -> PdfReader:
 
 def _read(raw: bytes) -> dict:
     reader = open_reader(raw)
+    browser = needs_browser_pdf(reader)
     pages = []
     try:
         page_list = list(reader.pages)
@@ -111,7 +119,11 @@ def _read(raw: bytes) -> dict:
         raise PdfPreviewError("這份 PDF 需要加密元件才能開啟") from exc
     except Exception as exc:
         raise PdfPreviewError("無法讀取這個 PDF") from exc
-    return {"pages": pages, "asset": hashlib.sha256(raw).hexdigest()[-16:]}
+    stored = {"pages": pages, "asset": _asset(raw)}
+    if browser:
+        # Keep the original pages. Rebuilding the template shifts every box.
+        stored["render"] = "browser"
+    return stored
 
 
 def iter_widgets(page, crop_w: float | None = None, crop_h: float | None = None, rotation: int = 0):
@@ -283,6 +295,11 @@ def _render_page(raw: bytes, number: int) -> bytes:
         if not images:
             raise PdfPreviewError("無法繪製這個 PDF 頁面")
         return images[0].read_bytes()
+
+
+def _asset(raw: bytes) -> str:
+    # The suffix changes when the page picture changes, so a cached warning is not reused.
+    return hashlib.sha256(raw).hexdigest()[-12:] + "b"
 
 
 def _identity(source: str | Path | bytes) -> tuple[str, bytes]:

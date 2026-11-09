@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import mimetypes
 import os
 import re
 import threading
@@ -506,8 +507,9 @@ def _resolve_pdf(name: str) -> Path:
 
 
 @app.get("/api/pdf/preview")
-def pdf_preview(file: str) -> dict:
+def pdf_preview(file: str, response: Response) -> dict:
     """Preview a PDF, with one field for each box the form lets you fill."""
+    response.headers["Cache-Control"] = "no-store"
     path = _resolve_pdf(file)
     try:
         laid = preview_pdf(path)
@@ -533,7 +535,20 @@ def pdf_page(file: str, n: int = 1) -> Response:
     except OSError as exc:
         log.warning("cannot read pdf: %s", type(exc).__name__)
         raise HTTPException(422, "無法讀取這個 PDF") from exc
-    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+    return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/pdf/file")
+def pdf_file(file: str) -> FileResponse:
+    """The original PDF, so the browser can draw it without a rebuilt layout."""
+    path = _resolve_pdf(file)
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=path.name,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 _FORM_SUFFIXES = {"pdf": {".pdf"}, "word": {".docx"}, "excel": {".xlsx", ".xlsm"}}
@@ -556,7 +571,9 @@ def _pdf_mapping_name(name: str) -> str:
 
 
 def _pdf_field_id(ident: str) -> bool:
-    return ident.startswith("pdf-") and len(ident) <= 40
+    if not ident.startswith("pdf-") or not 5 < len(ident) <= 120:
+        return False
+    return all(char.isalnum() or char in "._-" for char in ident[4:])
 
 
 def _excel_cell_id(ident: str) -> bool:
@@ -878,4 +895,5 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+mimetypes.add_type("text/javascript", ".mjs")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

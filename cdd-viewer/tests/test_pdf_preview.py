@@ -44,6 +44,7 @@ class PdfPreviewTests(unittest.TestCase):
     def test_a_fillable_pdf_lists_its_widgets_on_the_page(self):
         laid = preview_pdf(_form_pdf())
         self.assertEqual(laid["kind"], "pdf")
+        self.assertEqual(laid["render"], "page")
         self.assertEqual(laid["page_count"], 2)
         page = laid["pages"][0]
         self.assertEqual(page["width"], round(595 * 96 / 72))
@@ -100,6 +101,163 @@ class PdfPreviewTests(unittest.TestCase):
         laid = preview_pdf(raw.getvalue())
         self.assertEqual(laid["kind"], "pdf")
         self.assertEqual(laid["page_count"], 1)
+
+    def test_an_adobe_reader_shell_is_replaced_by_its_form(self):
+        from io import BytesIO
+
+        from pypdf import PdfWriter
+        from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, TextStringObject
+
+        template = """<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">
+  <subform name="form1" layout="position" w="210mm" h="297mm">
+    <pageSet><pageArea>
+      <contentArea x="0mm" y="0mm" w="210mm" h="297mm"/>
+      <medium stock="a4" short="210mm" long="297mm"/>
+    </pageArea></pageSet>
+    <field name="CompanyName" x="20mm" y="40mm" w="80mm" h="8mm">
+      <ui><textEdit/></ui>
+      <caption><value><text>Company</text></value></caption>
+    </field>
+    <field name="PrivateBox" x="20mm" y="60mm" w="5mm" h="5mm">
+      <ui><checkButton/></ui>
+    </field>
+  </subform>
+</template>
+""".encode()
+        writer = PdfWriter()
+        writer.add_blank_page(width=595, height=842)
+        page = writer.pages[0]
+        warning = DecodedStreamObject()
+        warning.set_data(
+            b"BT /F1 12 Tf 72 720 Td "
+            b"(The document you are trying to load requires Adobe Reader 8 or higher) Tj ET"
+        )
+        page[NameObject("/Contents")] = writer._add_object(warning)
+        packet = DecodedStreamObject()
+        packet.set_data(template)
+        form = DictionaryObject()
+        form[NameObject("/XFA")] = ArrayObject([
+            TextStringObject("template"),
+            writer._add_object(packet),
+        ])
+        writer._root_object[NameObject("/AcroForm")] = form
+        raw = BytesIO()
+        writer.write(raw)
+        laid = preview_pdf(raw.getvalue())
+        self.assertEqual(laid["render"], "browser")
+        names = [item["name"] for item in laid["pages"][0]["fields"]]
+        self.assertNotIn("form1.CompanyName", names)
+        self.assertNotIn("form1.PrivateBox", names)
+
+    def test_xfa_without_widgets_is_shown_even_without_the_reader_sentence(self):
+        from io import BytesIO
+
+        from pypdf import PdfWriter
+        from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, TextStringObject
+
+        template = (
+            b'<?xml version="1.0"?><template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">'
+            b'<subform name="form1" layout="position">'
+            b'<field name="Address" x="10mm" y="10mm" w="40mm" h="8mm"><ui><textEdit/></ui></field>'
+            b"</subform></template>"
+        )
+        writer = PdfWriter()
+        writer.add_blank_page(width=595, height=842)
+        packet = DecodedStreamObject()
+        packet.set_data(template)
+        form = DictionaryObject()
+        form[NameObject("/XFA")] = ArrayObject([TextStringObject("template"), writer._add_object(packet)])
+        writer._root_object[NameObject("/AcroForm")] = form
+        raw = BytesIO()
+        writer.write(raw)
+        laid = preview_pdf(raw.getvalue())
+        self.assertEqual(laid["render"], "browser")
+        self.assertNotIn("form1.Address", [item["name"] for item in laid["pages"][0]["fields"]])
+
+    def test_a_hidden_form_is_drawn_and_the_warning_is_left_out(self):
+        template = """<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">
+  <subform name="form1" presence="hidden" layout="position">
+    <draw name="Notice" x="10mm" y="10mm" w="160mm" h="20mm">
+      <value><text>The document you are trying to load requires Adobe Reader 8 or higher. See http://www.adobe.com/go/pdf_forms_configure</text></value>
+    </draw>
+    <field name="Business" presence="hidden" x="20mm" y="80mm" w="70mm" h="8mm"><ui><textEdit/></ui></field>
+  </subform>
+</template>
+""".encode()
+        laid = preview_pdf(_xfa_pdf(template))
+        self.assertEqual(laid["render"], "browser")
+        self.assertNotIn("form1.Business", [item["name"] for item in laid["pages"][0]["fields"]])
+
+    def test_a_script_with_a_less_than_sign_does_not_hide_the_field(self):
+        template = b"""<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">
+  <subform name="form1" layout="position">
+    <field name="Company" x="12mm" y="20mm" w="50mm" h="8mm">
+      <ui><textEdit/></ui>
+      <event activity="initialize"><script>if (a < b) { this.rawValue = 1; }</script></event>
+    </field>
+  </subform>
+</template>"""
+        laid = preview_pdf(_xfa_pdf(template))
+        self.assertEqual(laid["render"], "browser")
+
+    def test_a_use_reference_keeps_the_tick_box(self):
+        template = b"""<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">
+  <subform name="form1" layout="position">
+    <proto>
+      <field id="Private" name="Private" w="5mm" h="5mm"><ui><checkButton/></ui></field>
+    </proto>
+    <field use="#Private" name="PrivateBox" x="20mm" y="30mm"/>
+  </subform>
+</template>"""
+        laid = preview_pdf(_xfa_pdf(template))
+        self.assertEqual(laid["render"], "browser")
+        self.assertFalse(any(item["name"].endswith("PrivateBox") for item in laid["pages"][0]["fields"]))
+
+    def test_the_packet_that_actually_contains_fields_is_used(self):
+        stub = (
+            b'<?xml version="1.0"?><template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">'
+            b'<subform name="empty"/></template>'
+        )
+        real = (
+            b'<?xml version="1.0"?><template xmlns="http://www.xfa.org/schema/xfa-template/3.0/">'
+            b'<subform name="form1" layout="position">'
+            b'<field name="BusinessNo" x="15mm" y="20mm" w="40mm" h="8mm"><ui><textEdit/></ui></field>'
+            b"</subform></template>"
+        )
+        laid = preview_pdf(_xfa_pdf(stub, extra=[("form", real)]))
+        self.assertEqual(laid["render"], "browser")
+        self.assertNotIn("form1.BusinessNo", [item["name"] for item in laid["pages"][0]["fields"]])
+
+
+def _xfa_pdf(template: bytes, extra=None) -> bytes:
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, TextStringObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=595, height=842)
+    page = writer.pages[0]
+    warning = DecodedStreamObject()
+    warning.set_data(b"BT /F1 12 Tf 72 720 Td (The document you are trying to load requires Adobe Reader 8 or higher) Tj ET")
+    page[NameObject("/Contents")] = writer._add_object(warning)
+    packets = [("template", template), *(extra or [])]
+    array = ArrayObject()
+    for name, payload in packets:
+        stream = DecodedStreamObject()
+        stream.set_data(payload)
+        array.append(TextStringObject(name))
+        array.append(writer._add_object(stream))
+    form = DictionaryObject()
+    form[NameObject("/XFA")] = array
+    writer._root_object[NameObject("/AcroForm")] = form
+    raw = BytesIO()
+    writer.write(raw)
+    return raw.getvalue()
 
 
 def _luma(data: bytes):

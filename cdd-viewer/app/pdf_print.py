@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from io import BytesIO
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from pypdf.generic import (
 )
 
 from .pdf_preview import PdfPreviewError, iter_widgets, open_reader, preview_pdf
+from .pdf_xfa import decode_xml
 
 _JOBS: dict[str, tuple[float, bytes]] = {}
 _JOB_SECONDS = 120
@@ -67,6 +69,7 @@ def compose_pdf(source: str | Path | bytes, fields: list) -> bytes:
                 _set_check(widget, value.casefold() in _CHECKED or value in _CHECKED)
                 continue
             _show_widget_text(writer, widget, value, wanted.get((number, f"{spec['id']}:size")))
+    _write_xfa_values(writer, _xfa_values(fields))
     _keep_appearances(writer)
     out = BytesIO()
     writer.write(out)
@@ -94,6 +97,110 @@ def recall(token: str) -> bytes | None:
         _JOBS.pop(token, None)
         return None
     return data
+
+
+def _xml_name(part: str) -> bool:
+    return bool(part) and bool(re.fullmatch(r"[\w.-]+", part, flags=re.UNICODE))
+
+
+def _xfa_values(fields: list) -> dict[str, str]:
+    found = {}
+    if not isinstance(fields, list):
+        return found
+    for item in fields[:800]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        parts = [part for part in name.split(".") if part]
+        if not parts or any(not _xml_name(part) for part in parts):
+            continue
+        raw = str(item.get("text") or "").replace("\r\n", "\n").replace("\r", "\n")
+        lines = raw.split("\n")
+        text = lines[0].strip() if len(lines) == 1 else "\n".join(line.strip() for line in lines)
+        if not text.strip():
+            continue
+        found[".".join(parts)] = text[:500]
+    return found
+
+
+def _local_tag(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _source_encoding(data: bytes) -> str:
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in data[:80]:
+        return "utf-16"
+    return "utf-8"
+
+
+def _keep_namespace_prefixes(text: str) -> None:
+    for prefix, uri in re.findall(r'xmlns:([A-Za-z_][\w.-]*)="([^"]+)"', text):
+        ET.register_namespace(prefix, uri)
+
+
+def _apply_xfa_values(xml: bytes, values: dict[str, str]) -> bytes:
+    text = decode_xml(xml)
+    had_declaration = text.lstrip().startswith("<?")
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return xml
+    data = next((node for node in root.iter() if _local_tag(node.tag) == "data"), None)
+    if data is None:
+        return xml
+    _keep_namespace_prefixes(text)
+    for path, value in values.items():
+        node = data
+        for part in path.split("."):
+            found = next((child for child in list(node) if _local_tag(child.tag) == part), None)
+            if found is None:
+                found = ET.Element(part)
+                node.append(found)
+            node = found
+        node.text = value
+    # A declaration belongs only at the start of the whole package. Datasets
+    # packets usually have none, and adding one makes Acrobat stop at that line.
+    return ET.tostring(root, encoding=_source_encoding(xml), xml_declaration=had_declaration)
+
+
+def _packet_label(item) -> str:
+    if isinstance(item, bytes):
+        return item.decode("latin1", "replace").strip("/() ")
+    text = str(item).strip()
+    if text.startswith("(") and text.endswith(")"):
+        text = text[1:-1]
+    return text.strip("/ ")
+
+
+def _write_xfa_values(writer: PdfWriter, values: dict[str, str]) -> None:
+    if not values:
+        return
+    root = writer._root_object
+    form = root.get("/AcroForm")
+    if form is None:
+        return
+    form = form.get_object()
+    packet = form.get("/XFA")
+    if packet is None:
+        return
+    packet = packet.get_object()
+    if not isinstance(packet, list):
+        return
+    items = list(packet)
+    for index in range(0, len(items) - 1, 2):
+        if _packet_label(items[index]).lower() != "datasets":
+            continue
+        stream = items[index + 1].get_object()
+        try:
+            current = stream.get_data()
+        except Exception:
+            continue
+        updated = _apply_xfa_values(current, values)
+        fresh = DecodedStreamObject()
+        fresh.set_data(updated)
+        items[index + 1] = writer._add_object(fresh)
+        form[NameObject("/XFA")] = ArrayObject(items)
+        return
 
 
 def _clean_fields(fields: list) -> dict[tuple[int, str], str]:

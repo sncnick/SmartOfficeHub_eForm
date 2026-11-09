@@ -71,6 +71,21 @@ class PdfMappingApiTests(unittest.TestCase):
         again = pdf_mappings(name)
         self.assertEqual(again["maps"]["pdf-1-1"]["label"], "地址")
 
+    def test_a_browser_field_name_is_kept(self):
+        name = "sample-form.pdf"
+        ident = "pdf-form1.Page1.BusinessName"
+        body = save_pdf_mappings({
+            "file": name,
+            "maps": {ident: {"key": "company.name_zh", "label": "中文名稱", "kind": "text", "group": "公司"}},
+            "ticks": {},
+        })
+        self.assertEqual(body["maps"][ident]["key"], "company.name_zh")
+        self.assertNotIn("pdf-has space", save_pdf_mappings({
+            "file": name,
+            "maps": {"pdf-has space": {"key": "X", "label": "X", "kind": "text"}},
+            "ticks": {},
+        })["maps"])
+
     def test_a_choice_option_is_kept_for_a_tick_box(self):
         name = "sample-form.pdf"
         body = save_pdf_mappings({
