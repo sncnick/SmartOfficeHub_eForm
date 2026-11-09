@@ -71,6 +71,31 @@ class PdfMappingApiTests(unittest.TestCase):
         again = pdf_mappings(name)
         self.assertEqual(again["maps"]["pdf-1-1"]["label"], "地址")
 
+    def test_a_choice_option_is_kept_for_a_tick_box(self):
+        name = "sample-form.pdf"
+        body = save_pdf_mappings({
+            "file": name,
+            "maps": {
+                "pdf-1-3": {
+                    "key": "company.type",
+                    "label": "公司類別 · 私人 Private",
+                    "kind": "choice",
+                    "group": "公司",
+                    "option": "private",
+                    "options": [
+                        {"value": "private", "label": "私人 Private"},
+                        {"value": "public", "label": "公眾 Public"},
+                    ],
+                },
+            },
+            "ticks": {},
+        })
+        saved = body["maps"]["pdf-1-3"]
+        self.assertEqual(saved["option"], "private")
+        self.assertEqual(saved["options"][0]["value"], "private")
+        again = pdf_mappings(name)
+        self.assertEqual(again["maps"]["pdf-1-3"]["option"], "private")
+
     def test_a_second_file_does_not_replace_the_first(self):
         first = "sample-form.pdf"
         second = "other-form.pdf"

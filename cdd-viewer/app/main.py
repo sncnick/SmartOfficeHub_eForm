@@ -594,6 +594,9 @@ def _clean_field(value: dict) -> dict | None:
             })
     if value.get("lock") is True:
         item["lock"] = True
+    option = str(value.get("option") or "")[:40]
+    if option:
+        item["option"] = option
     return item if item["key"] else None
 
 

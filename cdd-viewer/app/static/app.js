@@ -2456,15 +2456,96 @@ function fieldChecked(key) {
   return /^(1|true|yes|on|y|是)$/i.test(companyFieldText(key));
 }
 
-function refreshExcelLiveValues() {
-  document.querySelectorAll('.excel-live[data-excel-field]').forEach((node) => {
-    const text = companyFieldText(node.dataset.excelField);
-    node.textContent = text;
-    node.classList.toggle('empty', !text);
+function companyRawValue(key) {
+  const company = selectedCompany();
+  if (!company || !key) return '';
+  if (key === 'company.type') return company.general?.company_type || '';
+  const person = String(key).match(/^((?:DIR|SH|CS)(?:\d+(?:-\d+(?:\.\d+)?)?)?)\.id_type$/i);
+  if (!person) return '';
+  const party = partyFor(company, person[1].toUpperCase());
+  return party ? (currentRecord(party.id_numbers)?.id_type || '') : '';
+}
+
+function choiceOption(mapped) {
+  const options = mapped?.options || [];
+  const wanted = String(mapped?.option || '').trim().toLowerCase();
+  const label = String(mapped?.label || '').trim().toLowerCase();
+  if (wanted) {
+    const found = options.find((item) => String(item.value || '').trim().toLowerCase() === wanted);
+    if (found) return found;
+    return { value: mapped.option, label: '' };
+  }
+  return options.find((item) => {
+    const name = String(item.label || '').trim().toLowerCase();
+    const value = String(item.value || '').trim().toLowerCase();
+    return Boolean(name && label.includes(name)) || Boolean(value && label.includes(value));
+  }) || null;
+}
+
+function mappedCheckboxOn(mapped) {
+  if (!mapped) return false;
+  if (mapped.kind === 'bool') return fieldChecked(mapped.key);
+  const option = mapped.kind === 'choice' || mapped.option ? choiceOption(mapped) : null;
+  if (!option && mapped.kind !== 'choice') return fieldChecked(mapped.key);
+  const raw = String(companyRawValue(mapped.key) || '').trim().toLowerCase();
+  const shown = String(companyFieldText(mapped.key) || '').trim().toLowerCase();
+  if (!option) return Boolean(raw || shown);
+  const value = String(option.value || '').trim().toLowerCase();
+  const name = String(option.label || '').trim().toLowerCase();
+  const label = String(mapped.label || '').trim().toLowerCase();
+  if (raw && value && raw === value) return true;
+  if (shown && name && (shown === name || name.includes(shown) || shown.includes(name))) return true;
+  if (shown && label.includes(shown)) return true;
+  if (raw && label.includes(raw)) return true;
+  return false;
+}
+
+function checkboxCatalog(fields) {
+  const pool = [];
+  (fields || []).forEach((field) => {
+    if (field.kind === 'choice' && (field.options || []).length) {
+      field.options.forEach((option) => {
+        pool.push({
+          ...field,
+          label: `${field.label} · ${option.label}`,
+          option: option.value,
+        });
+      });
+      return;
+    }
+    pool.push(field);
   });
-  document.querySelectorAll('.excel-tick input[data-excel-field]').forEach((node) => {
+  return pool;
+}
+
+function refreshExcelLiveValues() {
+  document.querySelectorAll('.excel-live[data-excel-field], .excel-filled[data-excel-field]').forEach((node) => {
+    const text = companyFieldText(node.dataset.excelField);
+    if (node.classList.contains('excel-filled')) node.innerHTML = breakHtml(text);
+    else node.textContent = text;
+    node.classList.toggle('empty', !text);
+    node.classList.toggle('pre', /[\r\n]/.test(text));
+  });
+  document.querySelectorAll('.excel-tick input[data-excel-field], .excel-browser-mark[data-excel-field] input').forEach((node) => {
     node.checked = fieldChecked(node.dataset.excelField);
   });
+  document.querySelectorAll('.excel-form-field[data-excel-field]').forEach((node) => {
+    if (node === document.activeElement) return;
+    if (node.type === 'checkbox') node.checked = fieldChecked(node.dataset.excelField);
+    else node.value = companyFieldText(node.dataset.excelField);
+  });
+  refreshLaidForm();
+}
+
+function refreshLaidForm() {
+  if (!wordView?.doc?.pages?.length) return;
+  const scroll = $('#excelScroll');
+  if (!scroll || document.activeElement?.closest?.('#excelScroll')) return;
+  const top = scroll.scrollTop;
+  const left = scroll.scrollLeft;
+  renderWordPage(wordView.doc, wordView.page);
+  scroll.scrollTop = top;
+  scroll.scrollLeft = left;
 }
 
 function excelSelectHtml(fields) {
@@ -2498,6 +2579,7 @@ function fieldSnapshot(field) {
     group: field.group || '',
   };
   if (field.kind === 'free') snap.text = String(field.text || '');
+  if (field.option) snap.option = String(field.option);
   return snap;
 }
 
@@ -2509,21 +2591,27 @@ function isFillField(field) {
   return Boolean(field && (field.kind === 'free' || usableExcelMap(field)));
 }
 
+function fieldDisplayName(field) {
+  if (!field) return '';
+  if (field.kind === 'free') return '自由文字';
+  const group = String(field.group || '').trim();
+  const label = String(field.label || field.key || '').trim();
+  if (group && label && !label.startsWith(group)) return `${group} · ${label}`;
+  return label || group;
+}
+
 function formFillTags(fields) {
   const list = [];
   (fields || []).forEach((field) => {
     if (!isFillField(field)) return;
-    const id = `${field.kind}\t${field.key}`;
-    if (list.some((item) => `${item.kind}\t${item.key}` === id)) return;
+    const id = `${field.kind}\t${field.key}\t${field.option || ''}`;
+    if (list.some((item) => `${item.kind}\t${item.key}\t${item.option || ''}` === id)) return;
     list.push(field);
   });
-  if (!excelForm || !list.length) return '';
-  const names = list.map((field) => (
-    field.kind === 'free' ? '自由文字' : (field.group ? `${field.group} · ${field.label}` : field.label)
-  ));
-  const keys = list.filter((field) => field.kind !== 'free').map((field) => field.key);
-  const right = keys.length ? `<span class="form-fill-tag form-fill-tag-right">${esc(keys.join('、'))}</span>` : '';
-  return `<span class="form-fill-tag form-fill-tag-left">${esc(names.join('、'))}</span>${right}`;
+  if (!list.length) return '';
+  const names = list.map(fieldDisplayName).filter(Boolean);
+  if (!names.length) return '';
+  return `<span class="form-fill-tag form-fill-tag-left">${esc(names.join('、'))}</span>`;
 }
 
 function freeTextInput(field, wordId) {
@@ -2592,8 +2680,24 @@ function storedCellFields(cell) {
 
 function refreshMapMenu() {
   const menu = excelMapMenu;
-  if (!menu?._cell) return;
-  fillExcelMapMenu(menu._cell, menu._results || [], menu._input || menu._cell, Boolean(menu._includeConvert));
+  if (!menu || menu.hidden) return;
+  if (!menu._cell && !menu._wordField) return;
+  const anchor = menu._wordAnchor || menu._input || menu._cell;
+  fillExcelMapMenu(menu._cell, menu._catalog || mappingCatalog(), anchor, Boolean(menu._includeConvert));
+}
+
+function mappingQueryParts(query) {
+  return String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function mappingMatches(field, query) {
+  const parts = mappingQueryParts(query);
+  if (!parts.length || !field) return true;
+  const hay = [field.group, field.label, field.key, companyFieldText(field.key)]
+    .join(' ')
+    .toLowerCase()
+    .replace(/\s+/g, '');
+  return parts.every((part) => hay.includes(part.replace(/\s+/g, '')));
 }
 
 function commitExcelMaps(cell, fields) {
@@ -2668,8 +2772,9 @@ function closeExcelMapMenu() {
   excelMapMenu._picked = [];
   excelMapMenu._pickedCellId = '';
   excelMapMenu._wordField = null;
-  excelMapMenu._wordQuery = '';
+  excelMapMenu._wordCaret = null;
   excelMapMenu._wordAnchor = null;
+  excelMapMenu._keepSearchFocus = false;
 }
 
 function ensureExcelMapMenu() {
@@ -2686,15 +2791,28 @@ function ensureExcelMapMenu() {
     event.stopPropagation();
     chooseMapButton(button);
   });
+  excelMapMenu.addEventListener('compositionstart', (event) => {
+    if (event.target.closest('.word-map-query, .excel-map-query')) excelMapMenu._composing = true;
+  });
+  excelMapMenu.addEventListener('compositionend', (event) => {
+    const input = event.target.closest('.word-map-query');
+    excelMapMenu._composing = false;
+    excelMapMenu._imeEnter = true;
+    clearTimeout(excelMapMenu._imeEnterTimer);
+    excelMapMenu._imeEnterTimer = setTimeout(() => { excelMapMenu._imeEnter = false; }, 0);
+    if (!input) return;
+    excelMapMenu._query = input.value;
+    paintMapChoices(excelMapMenu);
+  });
   excelMapMenu.addEventListener('input', (event) => {
     const input = event.target.closest('.word-map-query');
-    if (!input || !excelMapMenu._wordField) return;
-    excelMapMenu._wordQuery = input.value;
-    excelMapMenu._wordCaret = input.selectionStart;
-    fillExcelMapMenu(null, mappingCatalog(), excelMapMenu._wordAnchor, false);
+    if (!input) return;
+    excelMapMenu._query = input.value;
+    paintMapChoices(excelMapMenu);
   });
   excelMapMenu.addEventListener('keydown', (event) => {
     if (event.target.closest('.word-map-query')) {
+      if (imeBlocksMenuKey(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         closeExcelMapMenu();
@@ -2793,8 +2911,13 @@ function chooseMapButton(button) {
   commitExcelMap(cell, field);
 }
 
+function imeBlocksMenuKey(event) {
+  if (event.isComposing || event.keyCode === 229 || excelMapMenu?._composing) return true;
+  return event.key === 'Enter' && Boolean(excelMapMenu?._imeEnter);
+}
+
 function onMapMenuKey(event) {
-  if (!excelMapMenu || excelMapMenu.hidden) return;
+  if (!excelMapMenu || excelMapMenu.hidden || imeBlocksMenuKey(event)) return;
   const buttons = [...excelMapMenu.querySelectorAll('button')];
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault();
@@ -2860,56 +2983,96 @@ function mapActionHtml(cell, includeConvert) {
     + `<button type="button" class="excel-map-action${multiOn}" data-map-multi>多選</button>${apply}</div>`;
 }
 
-function fillExcelMapMenu(cell, fields, anchor, includeConvert) {
-  const menu = ensureExcelMapMenu();
-  const cellId = cell ? `${cell.dataset.excelRow}\t${cell.dataset.excelCol}` : '';
-  const sameCell = menu._pickedCellId === cellId && cellId;
-  const previousActive = sameCell ? excelMapActive : null;
-  if (!sameCell) {
-    menu._pickedCellId = cellId;
-    menu._multi = false;
-    menu._picked = storedCellFields(cell).map(fieldSnapshot);
-  }
-  menu._cell = cell;
-  menu._results = fields;
-  menu._includeConvert = includeConvert;
-  const sameMark = menu._browserMark
-    && String(menu._browserMark.row) === String(cell?.dataset.excelRow)
-    && menu._browserMark.col === cell?.dataset.excelCol;
-  if (!sameMark) menu._browserMark = null;
-  const pickedKeys = new Set((menu._picked || []).map((item) => item.key));
-  const options = fields.map((field, index) => {
+function mapMenuTargetId(cell) {
+  if (excelMapMenu?._wordField) return `word\t${excelMapMenu._wordField.file}\t${excelMapMenu._wordField.id}`;
+  if (cell) return `cell\t${cell.dataset.excelRow}\t${cell.dataset.excelCol}`;
+  return '';
+}
+
+function mapChoiceHtml(shown) {
+  const pickedKeys = new Set((excelMapMenu?._picked || []).map((item) => item.key));
+  const options = (shown || []).map((field, index) => {
     const live = companyFieldText(field.key);
-    const picked = menu._multi && pickedKeys.has(field.key);
-    const box = menu._multi ? `<span class="excel-multi-box">${picked ? '☑' : '☐'}</span>` : '';
+    const picked = excelMapMenu?._multi && pickedKeys.has(field.key);
+    const box = excelMapMenu?._multi ? `<span class="excel-multi-box">${picked ? '☑' : '☐'}</span>` : '';
     return `<button type="button" data-map-index="${index}" class="${picked ? 'picked' : ''}">`
       + `<span class="excel-map-choice-line">${box}<span>${esc(field.group || '')} ${esc(field.label)}</span></span>`
       + `<span class="key">${esc(live || '（沒有資料）')}</span></button>`;
   }).join('');
-  const search = '';
-  menu.innerHTML = search + mapActionHtml(cell, includeConvert)
-    + (options || '<div class="excel-map-empty">沒有相符欄位</div>');
+  return options || '<div class="excel-map-empty">沒有相符欄位</div>';
+}
+
+function paintMapChoices(menu) {
+  const list = menu?.querySelector('.excel-map-list');
+  if (!list) return;
+  const shown = (menu._catalog || []).filter((field) => mappingMatches(field, menu._query));
+  menu._results = shown;
+  list.innerHTML = mapChoiceHtml(shown);
   const buttons = [...menu.querySelectorAll('button')];
   const firstField = buttons.findIndex((button) => button.dataset.mapIndex != null);
-  const typed = Boolean((menu._input?.value || '').trim());
-  excelMapActive = previousActive != null
-    ? Math.max(0, Math.min(previousActive, buttons.length - 1))
-    : ((typed || menu._wordField) && firstField >= 0 ? firstField : 0);
+  excelMapActive = firstField >= 0 ? firstField : 0;
+  buttons.forEach((button, index) => button.classList.toggle('active', index === excelMapActive));
+}
+
+function fillExcelMapMenu(cell, fields, anchor, includeConvert) {
+  const menu = ensureExcelMapMenu();
+  const targetId = mapMenuTargetId(cell);
+  const sameTarget = Boolean(targetId) && menu._pickedCellId === targetId;
+  const previousActive = sameTarget ? excelMapActive : null;
+  if (!sameTarget) {
+    menu._pickedCellId = targetId;
+    menu._multi = false;
+    menu._picked = storedCellFields(cell).map(fieldSnapshot);
+  }
+  menu._cell = cell;
+  menu._catalog = fields;
+  menu._includeConvert = includeConvert;
+  const shown = (fields || []).filter((field) => mappingMatches(field, menu._query));
+  menu._results = shown;
+  const sameMark = menu._browserMark
+    && String(menu._browserMark.row) === String(cell?.dataset.excelRow)
+    && menu._browserMark.col === cell?.dataset.excelCol;
+  if (!sameMark) menu._browserMark = null;
+  const query = String(menu._query || '');
+  const search = `<div class="word-map-search"><input type="search" class="word-map-query" placeholder="搜尋欄位" aria-label="搜尋欄位" value="${esc(query)}" autocomplete="off" spellcheck="false"></div>`;
+  menu.innerHTML = search + mapActionHtml(cell, includeConvert)
+    + `<div class="excel-map-list">${mapChoiceHtml(shown)}</div>`;
+  const buttons = [...menu.querySelectorAll('button')];
+  const firstField = buttons.findIndex((button) => button.dataset.mapIndex != null);
+  if (menu._searchMove) {
+    excelMapActive = firstField >= 0 ? firstField : 0;
+    menu._searchMove = false;
+  } else if (previousActive != null) {
+    excelMapActive = Math.max(0, Math.min(previousActive, buttons.length - 1));
+  } else if (query.trim() && firstField >= 0) {
+    excelMapActive = firstField;
+  } else {
+    excelMapActive = 0;
+  }
   buttons.forEach((button, index) => button.classList.toggle('active', index === excelMapActive));
   menu.hidden = false;
   placeExcelMapMenu(anchor || cell);
   const wordQuery = menu.querySelector('.word-map-query');
-  if (wordQuery) {
+  if (menu._composing) return;
+  if (wordQuery && menu._keepSearchFocus) {
+    menu._keepSearchFocus = false;
     wordQuery.focus({ preventScroll: true });
     const caret = menu._wordCaret == null ? wordQuery.value.length : menu._wordCaret;
     wordQuery.setSelectionRange(caret, caret);
+  } else if (wordQuery && !menu._input) {
+    wordQuery.focus({ preventScroll: true });
+    if (query) wordQuery.select();
   } else if (!menu._input) menu.focus({ preventScroll: true });
 }
 
 function showExcelMapMenu(input) {
   const cell = input.closest('td');
   const menu = ensureExcelMapMenu();
+  const typed = String(input.value || '').trim();
+  if (typed) menu._query = input.value;
   menu._input = input;
+  menu._wordField = null;
+  menu._wordAnchor = null;
   fillExcelMapMenu(cell, mappingCatalog(), input, false);
 }
 
@@ -2919,7 +3082,6 @@ function openCellMenu(td, anchor) {
   menu._input = null;
   menu._browserMark = { row: td.dataset.excelRow, col: td.dataset.excelCol, scope: 'cell' };
   fillExcelMapMenu(td, mappingCatalog(), anchor || td, true);
-  menu.focus({ preventScroll: true });
 }
 
 function cellNeedsMenu(td) {
@@ -3070,7 +3232,7 @@ function excelInlineHtml(parts) {
   if (!parts || !parts.length) return '';
   return `<span class="excel-inline">${parts.map((part) => {
     if (part.tick) return excelBareTick(part.checked);
-    if (part.field && excelForm) return part.field.kind === 'bool' ? excelFormControl(part.field) : filledSpan(companyFieldText(part.field.key));
+    if (part.field && excelForm) return part.field.kind === 'bool' ? excelFormControl(part.field) : filledSpan(companyFieldText(part.field.key), part.field.key);
     if (part.field) return part.field.kind === 'bool' ? excelTick(part.field) : excelInlineValue(part.field);
     if (part.pick) return excelForm ? '' : excelPickControl([]);
     return esc(stripTickMarks(part.text));
@@ -3096,11 +3258,12 @@ function breakHtml(text) {
   return esc(text).replace(/\r\n|\r|\n/g, '<br>');
 }
 
-function filledSpan(text) {
+function filledSpan(text, key) {
   const value = String(text || '');
   if (!value) return '';
   const pre = /[\r\n]/.test(value) ? ' pre' : '';
-  return `<span class="excel-filled${pre}">${breakHtml(value)}</span>`;
+  const field = key ? ` data-excel-field="${esc(key)}"` : '';
+  return `<span class="excel-filled${pre}"${field}>${breakHtml(value)}</span>`;
 }
 
 function excelFormFieldsHtml(fields) {
@@ -3109,7 +3272,7 @@ function excelFormFieldsHtml(fields) {
     if (field.kind === 'bool') return excelFormControl(field);
     if (field.kind === 'free') return field.text ? filledSpan(field.text) : '';
     const text = companyFieldText(field.key);
-    return filledSpan(text);
+    return filledSpan(text, field.key);
   }).filter(Boolean).join('<span class="excel-multi-gap">、</span>')}</span>`;
 }
 
@@ -3134,7 +3297,7 @@ function renderBrowserParts(source, marks) {
     const name = mark.field ? (mark.field.group ? `${mark.field.group} · ${mark.field.label}` : mark.field.label) : '未對應欄位';
     if (excelForm && mark.field && mark.field.kind === 'bool') html += excelFormControl(mark.field);
     else if (excelForm && mark.field && mark.field.kind === 'free') html += freeTextInput(mark.field);
-    else if (excelForm && mark.field) html += filledSpan(companyFieldText(mark.field.key));
+    else if (excelForm && mark.field) html += filledSpan(companyFieldText(mark.field.key), mark.field.key);
     else if (excelForm) html += excelBareTick();
     else {
       const on = mark.field && mark.field.kind === 'bool' && fieldChecked(mark.field.key) ? ' checked' : '';
@@ -3315,7 +3478,7 @@ function renderExcelTable(data, options = {}) {
       else if (excelForm && partials.length) content = renderBrowserParts(value, partials);
       else if (excelForm && mapped && mapped.kind === 'free') content = freeTextInput(mapped);
       else if (excelForm && mapped && mapped.kind === 'bool') content = excelFormControl(mapped);
-      else if (excelForm && mapped) content = filledSpan(companyFieldText(mapped.key));
+      else if (excelForm && mapped) content = filledSpan(companyFieldText(mapped.key), mapped.key);
       else if (excelForm && (whole || (field && field.kind === 'pick') || isUnmappedMark(row.cells[index] || ''))) content = '';
       else if (whole) content = usableExcelMap(whole.field) ? excelMappedControl(whole.field, 'cell') : excelPickControl(rowOwners, stripTickMarks(value).trim());
       else if (partials.length) content = renderBrowserParts(value, partials);
@@ -3327,8 +3490,8 @@ function renderExcelTable(data, options = {}) {
       const formFields = [];
       const pushFill = (item) => {
         if (locked || !isFillField(item)) return;
-        const id = `${item.kind}\t${item.key}`;
-        if (formFields.some((field) => `${field.kind}\t${field.key}` === id)) return;
+        const id = `${item.kind}\t${item.key}\t${item.option || ''}`;
+        if (formFields.some((field) => `${field.kind}\t${field.key}\t${field.option || ''}` === id)) return;
         formFields.push(item);
       };
       chosen.forEach(pushFill);
@@ -3362,6 +3525,7 @@ function renderExcelTable(data, options = {}) {
     fitExcelSheet();
     settleExcelSpill();
   }
+  applyPdfZoom();
 }
 
 function settleExcelSpill() {
@@ -3746,6 +3910,36 @@ function toggleWordTick(file, id) {
   schedulePdfMapping(file);
 }
 
+function pdfTickMark(field) {
+  const side = Math.max(9, Math.round(Math.min(Number(field?.w) || 14, Number(field?.h) || 14) * 0.72));
+  return `<svg class="tick-mark" width="${side}" height="${side}" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.6 8.4 L6.1 12.2 L13.4 3.4" fill="none" stroke="#111" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+const PDF_ZOOM_MIN = 0.5;
+const PDF_ZOOM_MAX = 3;
+let pdfZoom = 1;
+
+function previewIsPdf() {
+  return !excelForm && wordView?.doc?.kind === 'pdf' && isPdfFile($('#excelFile')?.value || '');
+}
+
+function applyPdfZoom() {
+  const active = previewIsPdf();
+  document.querySelectorAll('#excelScroll .word-sheet').forEach((sheet) => {
+    sheet.style.zoom = active ? String(pdfZoom) : '';
+  });
+  const bar = $('#pdfZoomBar');
+  if (bar) bar.hidden = !active;
+  const label = $('#pdfZoomLabel');
+  if (label) label.textContent = `${Math.round(pdfZoom * 100)}%`;
+}
+
+function setPdfZoom(next) {
+  const clamped = Math.min(PDF_ZOOM_MAX, Math.max(PDF_ZOOM_MIN, next));
+  pdfZoom = Math.round(clamped * 100) / 100;
+  applyPdfZoom();
+}
+
 function fieldPlace(field, page, extra) {
   if (page && page.width && page.height) {
     const pct = (value, total) => `${(Number(value) || 0) / total * 100}%`;
@@ -3893,15 +4087,14 @@ function wordFieldHtml(field) {
   const mapped = wordFieldMap(file, field.id);
   let text = field.text || '';
   let checked = Boolean(field.checked);
-  if (excelForm && mapped) {
+  if (mapped) {
     if (mapped.kind === 'free') text = mapped.text || '';
-    else if (field.control === 'checkbox') checked = fieldChecked(mapped.key);
+    else if (field.control === 'checkbox') checked = mappedCheckboxOn(mapped);
     else text = companyFieldText(mapped.key) || '';
   }
-  const box = field.control === 'checkbox'
-    ? `<input type="checkbox" tabindex="-1"${checked ? ' checked' : ''} aria-label="${esc(field.name || '欄位')}">`
-    : '';
-  return `<span class="word-field" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${box}${breakHtml(text)}</span>`;
+  const box = field.control === 'checkbox' && checked ? pdfTickMark() : '';
+  const label = mapped ? formFillTags([mapped]) : '';
+  return `<span class="word-field" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${label}${box}${breakHtml(text)}</span>`;
 }
 
 function wordHitHtml(field, page) {
@@ -3909,13 +4102,12 @@ function wordHitHtml(field, page) {
   const file = $('#excelFile').value;
   const locked = wordFieldLocked(file, field.id);
   const mapped = locked ? null : wordFieldMap(file, field.id);
+  const checkbox = field.control === 'checkbox';
+  const ticked = checkbox && mappedCheckboxOn(mapped);
   let value = '';
   if (mapped?.kind === 'free') value = mapped.text || '';
-  else if (mapped) {
-    value = field.control === 'checkbox'
-      ? (fieldChecked(mapped.key) ? '☑' : '☐')
-      : (companyFieldText(mapped.key) || '');
-  }
+  else if (checkbox) value = ticked ? 'true' : '';
+  else if (mapped) value = companyFieldText(mapped.key) || '';
   if (field.enter && !locked && !value) {
     const cell = Boolean(field.cell);
     const side = cell ? 16 : Math.max(field.h || 14, 12);
@@ -3927,13 +4119,18 @@ function wordHitHtml(field, page) {
   }
   const hasContent = Boolean(String(value || '').trim());
   const lineBreaks = /[\r\n]/.test(value);
-  const pdfEmpty = excelForm && wordView.doc?.kind === 'pdf' && !hasContent;
-  const shown = mapped?.kind === 'free'
-    ? freeTextInput(mapped, field.id)
-    : (hasContent ? `<span class="word-hit-value${lineBreaks ? ' pre' : ''}">${breakHtml(value)}</span>` : '');
-  const pdf = wordView.doc?.kind === 'pdf' && hasContent && field.control !== 'checkbox' && mapped?.kind !== 'free';
+  const pdfEmpty = excelForm && wordView.doc?.kind === 'pdf' && !hasContent && !(checkbox && mapped);
+  const tickLabel = mapped ? (mapped.group ? `${mapped.group} · ${mapped.label}` : mapped.label) : (field.name || '欄位');
+  const shown = checkbox
+    ? (ticked ? pdfTickMark(field) : '')
+    : mapped?.kind === 'free'
+      ? freeTextInput(mapped, field.id)
+      : (hasContent ? `<span class="word-hit-value${lineBreaks ? ' pre' : ''}">${breakHtml(value)}</span>` : '');
+  const pdf = wordView.doc?.kind === 'pdf' && hasContent && !checkbox && mapped?.kind !== 'free';
   const size = Math.max(12, Math.min(field.h || 14, 18));
-  const place = page
+  const place = checkbox
+    ? (page ? fieldPlace(field, page) : `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`)
+    : page
     ? fieldPlace(field, page)
     : locked
       ? `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`
@@ -3943,13 +4140,15 @@ function wordHitHtml(field, page) {
         ? `left:${field.x}px;top:${field.y}px;min-width:${field.w || 12}px;min-height:${field.h || 14}px;width:max-content;height:auto;font-size:${size}px;line-height:${size}px`
         : `left:${field.x}px;top:${field.y}px;width:${field.w || 12}px;height:${field.h || 14}px`;
   const mode = locked
-    ? ` original${pdfEmpty ? ' form-empty' : ''}${lineBreaks ? ' lines' : ''}`
-    : `${field.blank ? ' blank' : ''}${hasContent ? ' filled' : ''}${mapped?.kind === 'free' ? ' free' : ''}${pdf && !lineBreaks ? ' pdf-fit' : ''}${lineBreaks ? ' lines' : ''}${excelForm && mapped && hasContent ? ' form-fill' : ''}${pdfEmpty ? ' form-empty' : ''}`;
-  const tags = (excelForm && mapped && (hasContent || pdfEmpty))
+    ? ` original${pdfEmpty ? ' form-empty' : ''}${lineBreaks ? ' lines' : ''}${checkbox ? ' tick-field' : ''}`
+    : `${field.blank ? ' blank' : ''}${hasContent ? ' filled' : ''}${mapped?.kind === 'free' ? ' free' : ''}${pdf && !lineBreaks ? ' pdf-fit' : ''}${lineBreaks ? ' lines' : ''}${excelForm && mapped && (hasContent || checkbox) ? ' form-fill' : ''}${pdfEmpty ? ' form-empty' : ''}${checkbox ? ' tick-field' : ''}${checkbox && mapped ? ' tick-set' : ''}`;
+  const tags = mapped
     ? formFillTags([mapped])
     : (pdfEmpty ? `<span class="form-fill-tag form-fill-tag-left">${esc(field.name || '未填欄位')}</span>` : '');
-  const tag = mapped?.kind === 'free' || (excelForm && mapped) || pdfEmpty ? 'div' : 'button';
-  return `<${tag} class="word-hit${mode}" title="${esc(value || field.name || '欄位')}" style="${place}" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}">${tags}${shown}</${tag}>`;
+  const tag = checkbox || mapped?.kind === 'free' || (excelForm && mapped) || pdfEmpty ? 'div' : 'button';
+  const control = checkbox ? ' data-word-control="checkbox"' : '';
+  const title = checkbox ? tickLabel : (value || field.name || '欄位');
+  return `<${tag} class="word-hit${mode}" title="${esc(title)}" style="${place}" data-word-field="${esc(field.id)}" data-word-param="${esc(field.name || '欄位')}"${control}>${tags}${shown}</${tag}>`;
 }
 
 function renderWordPage(doc, pageNumber) {
@@ -3976,6 +4175,7 @@ function renderWordPage(doc, pageNumber) {
   if (pager) pager.hidden = true;
   $('#excelSplit').disabled = true;
   $('#excelLm').disabled = true;
+  applyPdfZoom();
   requestAnimationFrame(fitPdfFieldText);
 }
 
@@ -4006,6 +4206,7 @@ function renderWordFile(doc, pageNumber) {
   if (pager) pager.hidden = true;
   $('#excelSplit').disabled = true;
   $('#excelLm').disabled = true;
+  applyPdfZoom();
   applyLaidPrint(doc);
   requestAnimationFrame(() => {
     fitPdfFieldText();
@@ -4124,12 +4325,21 @@ function fieldNodeText(node) {
 
 function pdfPrintFields() {
   fitPdfFieldText();
-  return [...document.querySelectorAll('#excelScroll .word-hit.filled, #excelScroll .word-hit.free')].map((node) => {
+  return [...document.querySelectorAll('#excelScroll .word-hit.filled, #excelScroll .word-hit.free, #excelScroll .word-hit.tick-set')].map((node) => {
     const page = node.closest('[data-page]');
+    if (!page || !node.dataset.wordField) return null;
+    if (node.classList.contains('tick-field')) {
+      if (!node.classList.contains('tick-set')) return null;
+      return {
+        page: Number(page.dataset.page),
+        id: node.dataset.wordField,
+        text: node.classList.contains('filled') ? 'true' : 'off',
+      };
+    }
     const value = node.querySelector('.word-hit-value');
     const typed = node.querySelector('.form-free');
     const text = typed ? typed.value : fieldNodeText(value);
-    if (!page || !text || !node.dataset.wordField) return null;
+    if (!text) return null;
     const size = value ? parseFloat(value.style.fontSize) : 0;
     return {
       page: Number(page.dataset.page),
@@ -4295,15 +4505,16 @@ function openWordField(node) {
   const id = node.dataset.wordField;
   const name = node.dataset.wordParam || '';
   const menu = ensureExcelMapMenu();
-  menu._wordField = { id, name, file: $('#excelFile').value };
-  menu._wordQuery = '';
+  const control = node.dataset.wordControl || '';
+  menu._wordField = { id, name, file: $('#excelFile').value, control };
   menu._wordCaret = null;
   menu._wordAnchor = node;
   menu._cell = null;
   menu._input = null;
   menu._browserMark = null;
   menu._includeConvert = false;
-  fillExcelMapMenu(null, mappingCatalog(), node, false);
+  const fields = control === 'checkbox' ? checkboxCatalog(mappingCatalog()) : mappingCatalog();
+  fillExcelMapMenu(null, fields, node, false);
 }
 
 async function loadLaidDocument(kind) {
@@ -5205,6 +5416,14 @@ function bindExcelPane() {
   });
   $('#excelSheetPrev').addEventListener('click', () => shiftExcelSheet(-1));
   $('#excelSheetNext').addEventListener('click', () => shiftExcelSheet(1));
+  $('#pdfZoomOut').addEventListener('click', () => setPdfZoom(pdfZoom / 1.25));
+  $('#pdfZoomIn').addEventListener('click', () => setPdfZoom(pdfZoom * 1.25));
+  $('#pdfZoomLabel').addEventListener('click', () => setPdfZoom(1));
+  $('#excelScroll').addEventListener('wheel', (event) => {
+    if (!previewIsPdf() || (!event.ctrlKey && !event.metaKey)) return;
+    event.preventDefault();
+    setPdfZoom(pdfZoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1));
+  }, { passive: false });
   $('#mapProfileSave').addEventListener('click', saveCurrentMappingProfile);
   $('#mapProfileLoad').addEventListener('click', recallMappingProfile);
   $('#mapProfileDelete').addEventListener('click', deleteMappingProfile);
@@ -5478,11 +5697,27 @@ function bindExcelPane() {
       return;
     }
     const input = event.target.closest('.excel-map-query');
-    if (input) showExcelMapMenu(input);
+    if (!input) return;
+    if (excelMapMenu?._composing && excelMapMenu._input === input) {
+      excelMapMenu._query = input.value;
+      paintMapChoices(excelMapMenu);
+      return;
+    }
+    showExcelMapMenu(input);
+  });
+  scroll.addEventListener('compositionstart', (event) => {
+    if (event.target.closest('.excel-map-query') && excelMapMenu) excelMapMenu._composing = true;
+  });
+  scroll.addEventListener('compositionend', (event) => {
+    if (!event.target.closest('.excel-map-query') || !excelMapMenu) return;
+    excelMapMenu._composing = false;
+    excelMapMenu._imeEnter = true;
+    clearTimeout(excelMapMenu._imeEnterTimer);
+    excelMapMenu._imeEnterTimer = setTimeout(() => { excelMapMenu._imeEnter = false; }, 0);
   });
   scroll.addEventListener('keydown', (event) => {
     const input = event.target.closest('.excel-map-query');
-    if (!input || !excelMapMenu || excelMapMenu.hidden) return;
+    if (!input || !excelMapMenu || excelMapMenu.hidden || imeBlocksMenuKey(event)) return;
     onMapMenuKey(event);
   });
   scroll.addEventListener('scroll', () => closeExcelMapMenu());

@@ -290,6 +290,9 @@ select option {
 .excel-meta-row { display: flex; align-items: flex-start; gap: 8px; }
 .excel-meta-row #excelMeta { flex: 1; min-width: 0; margin: 4px 0 0; }
 .excel-page-nav { display: flex; flex: none; align-items: center; gap: 6px; }
+.excel-zoom { display: flex; align-items: center; gap: 4px; }
+.excel-zoom[hidden] { display: none; }
+#pdfZoomLabel { min-width: 52px; }
 #excelFormPageToggle.on { background: #ecfdf5; border-color: #6ee7b7; color: #047857; }
 .excel-pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .excel-pager[hidden] { display: none; }
@@ -398,6 +401,22 @@ body.excel-form .print-page .word-sheet img {
   overflow: visible;
 }
 .word-hit:hover { z-index: 4; background: rgba(16, 185, 129, .34); }
+.word-hit.tick-field {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: visible;
+}
+.word-hit.tick-field.filled {
+  background: rgba(16, 185, 129, .18);
+  box-shadow: inset 0 0 0 1.5px #059669;
+}
+.word-hit.tick-field .tick-mark {
+  display: block;
+  flex: none;
+  pointer-events: none;
+}
 .word-hit::after {
   content: attr(data-word-param);
   position: absolute;
@@ -589,22 +608,35 @@ body.excel-form .excel-cell-show:has(.form-free) {
 }
 .form-fill-tag {
   position: absolute;
-  z-index: 6;
+  z-index: 8;
   top: 0;
-  max-width: 46%;
-  padding: 0 3px;
-  background: rgba(6, 95, 70, .9);
+  left: 0;
+  width: max-content;
+  max-width: none;
+  padding: 1px 5px;
+  background: rgba(6, 95, 70, .94);
   color: #fff;
   font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif;
   font-size: 9px;
   font-weight: 600;
-  line-height: 13px;
+  line-height: 12px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
   pointer-events: none;
 }
 .form-fill-tag-left { left: 0; border-radius: 0 0 3px 0; }
+.word-hit > .form-fill-tag-left,
+.word-field > .form-fill-tag-left,
+.excel-grid td.form-fill > .form-fill-tag-left {
+  transform: translateY(-100%);
+}
+.word-hit:has(> .form-fill-tag),
+.word-field,
+.excel-grid td.form-fill,
+.excel-grid td.excel-fill-cell.form-fill {
+  overflow: visible;
+}
 .form-fill-tag-right { right: 0; border-radius: 0 0 0 3px; }
 body.excel-form .word-hit.filled { overflow: visible; width: max-content; }
 body.excel-form .word-hit.pdf-fit { overflow: hidden; }
@@ -739,15 +771,19 @@ body:not(.excel-form) .excel-scroll .excel-tick input { pointer-events: none; }
 .excel-map-menu {
   position: fixed;
   z-index: 40;
+  display: flex;
+  flex-direction: column;
   max-height: 75vh;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 8px 24px rgba(15, 23, 42, .16);
   outline: none;
 }
-.word-map-search { position: sticky; top: 0; z-index: 2; background: #fff; }
+.excel-map-menu[hidden] { display: none; }
+.excel-map-list { min-height: 0; overflow: auto; }
+.word-map-search { flex: none; z-index: 2; background: #fff; }
 .word-map-query {
   width: 100%;
   box-sizing: border-box;
@@ -759,8 +795,7 @@ body:not(.excel-form) .excel-scroll .excel-tick input { pointer-events: none; }
   font-size: 13px;
 }
 .word-map-query:focus { outline: 2px solid #059669; outline-offset: -2px; }
-.word-map-search + .excel-map-actions { top: 36px; }
-.excel-map-actions { position: sticky; top: 0; z-index: 1; background: #fff; border-bottom: 1px solid #e5e7eb; }
+.excel-map-actions { flex: none; z-index: 1; background: #fff; border-bottom: 1px solid #e5e7eb; }
 .excel-map-menu .excel-map-action { font-weight: 600; }
 .excel-map-menu .excel-map-action.on { box-shadow: inset 3px 0 0 #059669; background: #ecfdf5; }
 .excel-map-menu button.picked { background: #ecfdf5; }

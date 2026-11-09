@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CDD 公司資料檢視</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261110c">
+  <link rel="stylesheet" href="/static/style.css?v=20261110o">
 </head>
 <body>
   <header class="topbar">
@@ -97,6 +97,11 @@
             <button type="button" class="btn small" id="excelSheetPrev" disabled>上一頁</button>
             <button type="button" class="btn small" id="excelFormPageToggle" disabled title="標記這一頁納入表格 PDF">納入</button>
             <button type="button" class="btn small" id="excelSheetNext" disabled>下一頁</button>
+            <div class="excel-zoom" id="pdfZoomBar" hidden>
+              <button type="button" class="btn small" id="pdfZoomOut" title="縮小">－</button>
+              <button type="button" class="btn small" id="pdfZoomLabel" title="還原實際大小">100%</button>
+              <button type="button" class="btn small" id="pdfZoomIn" title="放大">＋</button>
+            </div>
           </div>
           <p class="muted small" id="excelMeta">按上載放入 Excel 或 PDF。刪除只移除檔案，不會清除已匯入的公司資料。</p>
         </div>
@@ -155,6 +160,6 @@
   </div>
 
   <div class="pie-tip hidden" id="pieTip" role="tooltip"></div>
-  <script src="/static/app.js?v=20261110c"></script>
+  <script src="/static/app.js?v=20261110o"></script>
 </body>
 </html>
