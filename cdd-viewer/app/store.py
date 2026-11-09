@@ -60,6 +60,9 @@ class MemoryStore(Store):
     def __init__(self) -> None:
         self.companies: dict[str, dict] = {}
         self.meta: dict[str, Any] = {}
+        self.pdf_mappings: dict[str, dict] = {}
+        self.word_mappings: dict[str, dict] = {}
+        self.excel_mappings: dict[str, dict] = {}
 
     def ping(self) -> None:
         return None
@@ -91,6 +94,24 @@ class MemoryStore(Store):
     def all_docs(self) -> list[dict]:
         return [copy.deepcopy(doc) for doc in self.companies.values()]
 
+    def _form_bucket(self, kind: str) -> dict[str, dict]:
+        return {"pdf": self.pdf_mappings, "word": self.word_mappings, "excel": self.excel_mappings}[kind]
+
+    def get_form_mapping(self, kind: str, file_name: str) -> dict | None:
+        found = self._form_bucket(kind).get(file_name)
+        return copy.deepcopy(found) if found else None
+
+    def save_form_mapping(self, kind: str, file_name: str, record: dict, updated_at: str) -> dict:
+        stored = {"file": file_name, "updated_at": updated_at, **copy.deepcopy(record)}
+        self._form_bucket(kind)[file_name] = stored
+        return copy.deepcopy(stored)
+
+    def get_pdf_mapping(self, file_name: str) -> dict | None:
+        return self.get_form_mapping("pdf", file_name)
+
+    def save_pdf_mapping(self, file_name: str, maps: dict, ticks: dict, updated_at: str) -> dict:
+        return self.save_form_mapping("pdf", file_name, {"maps": maps, "ticks": ticks}, updated_at)
+
 
 class MongoStore(Store):
     def __init__(self, url: str, database: str) -> None:
@@ -100,6 +121,9 @@ class MongoStore(Store):
         db = self._client[database]
         self._companies = db["companies"]
         self._meta = db["meta"]
+        self._pdf_mappings = db["pdf_mappings"]
+        self._word_mappings = db["word_mappings"]
+        self._excel_mappings = db["excel_mappings"]
 
     def ping(self) -> None:
         self._client.admin.command("ping")
@@ -136,6 +160,29 @@ class MongoStore(Store):
 
     def all_docs(self) -> list[dict]:
         return [self._public(doc) for doc in self._companies.find({})]
+
+    def _form_bucket(self, kind: str):
+        return {"pdf": self._pdf_mappings, "word": self._word_mappings, "excel": self._excel_mappings}[kind]
+
+    def get_form_mapping(self, kind: str, file_name: str) -> dict | None:
+        found = self._form_bucket(kind).find_one({"_id": file_name})
+        if not found:
+            return None
+        found.pop("_id", None)
+        return found
+
+    def save_form_mapping(self, kind: str, file_name: str, record: dict, updated_at: str) -> dict:
+        stored = {"_id": file_name, "file": file_name, "updated_at": updated_at, **record}
+        self._form_bucket(kind).replace_one({"_id": file_name}, stored, upsert=True)
+        public = dict(stored)
+        public.pop("_id", None)
+        return public
+
+    def get_pdf_mapping(self, file_name: str) -> dict | None:
+        return self.get_form_mapping("pdf", file_name)
+
+    def save_pdf_mapping(self, file_name: str, maps: dict, ticks: dict, updated_at: str) -> dict:
+        return self.save_form_mapping("pdf", file_name, {"maps": maps, "ticks": ticks}, updated_at)
 
     @staticmethod
     def _public(doc: dict) -> dict:

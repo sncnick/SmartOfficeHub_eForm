@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from pathlib import Path
@@ -533,6 +534,219 @@ def pdf_page(file: str, n: int = 1) -> Response:
         log.warning("cannot read pdf: %s", type(exc).__name__)
         raise HTTPException(422, "無法讀取這個 PDF") from exc
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+_FORM_SUFFIXES = {"pdf": {".pdf"}, "word": {".docx"}, "excel": {".xlsx", ".xlsm"}}
+_WORD_FIELD_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,60}\Z")
+_EXCEL_COLUMN = re.compile(r"[A-Z]{1,3}\Z")
+
+
+def _form_mapping_name(name: str, kind: str) -> str:
+    cleaned = Path(str(name or "")).name.strip()
+    suffix = Path(cleaned).suffix.lower()
+    if not cleaned or cleaned != str(name or "").strip() or suffix not in _FORM_SUFFIXES[kind]:
+        raise HTTPException(400, "請指定檔案")
+    if cleaned.startswith("~$") or len(cleaned) > 180:
+        raise HTTPException(400, "請指定檔案")
+    return cleaned
+
+
+def _pdf_mapping_name(name: str) -> str:
+    return _form_mapping_name(name, "pdf")
+
+
+def _pdf_field_id(ident: str) -> bool:
+    return ident.startswith("pdf-") and len(ident) <= 40
+
+
+def _excel_cell_id(ident: str) -> bool:
+    sheet, sep, rest = ident.partition("\t")
+    row, sep2, col = rest.partition("\t")
+    if not sep or not sep2 or "\t" in col:
+        return False
+    if not sheet or len(sheet) > 31 or any(char in sheet for char in "\\/?*[]\n\r"):
+        return False
+    if not row.isdigit() or not 1 <= int(row) <= 200000:
+        return False
+    return bool(_EXCEL_COLUMN.fullmatch(col))
+
+
+def _clean_field(value: dict) -> dict | None:
+    if value.get("lock") is True and not str(value.get("key") or "").strip():
+        return {"lock": True}
+    item = {
+        "key": str(value.get("key") or "")[:80],
+        "label": str(value.get("label") or "")[:160],
+        "kind": str(value.get("kind") or "")[:20],
+        "group": str(value.get("group") or "")[:40],
+        "options": [],
+    }
+    if item["kind"] == "free":
+        item["text"] = str(value.get("text") or "")[:500]
+    options = value.get("options")
+    if isinstance(options, list):
+        for option in options[:12]:
+            if not isinstance(option, dict):
+                continue
+            item["options"].append({
+                "value": str(option.get("value") or "")[:40],
+                "label": str(option.get("label") or "")[:80],
+            })
+    if value.get("lock") is True:
+        item["lock"] = True
+    return item if item["key"] else None
+
+
+def _clean_field_maps(raw, ident_ok) -> dict:
+    if not isinstance(raw, dict):
+        return {}
+    kept = {}
+    for key, value in list(raw.items())[:2000]:
+        ident = str(key)
+        if not ident_ok(ident) or not isinstance(value, dict):
+            continue
+        item = _clean_field(value)
+        if item:
+            kept[ident] = item
+    return kept
+
+
+def _clean_flag_map(raw, ident_ok) -> dict:
+    if not isinstance(raw, dict):
+        return {}
+    kept = {}
+    for key, value in list(raw.items())[:2000]:
+        ident = str(key)
+        if ident_ok(ident) and value:
+            kept[ident] = True
+    return kept
+
+
+def _bounded_int(value, low: int, high: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return low
+    return max(low, min(high, number))
+
+
+def _clean_excel_mark(mark) -> dict | None:
+    if not isinstance(mark, dict):
+        return None
+    scope = str(mark.get("scope") or "")
+    if scope not in {"cell", "part", "lock"}:
+        return None
+    item: dict = {"scope": scope}
+    if scope == "part":
+        item["start"] = _bounded_int(mark.get("start"), 0, 20000)
+        item["end"] = _bounded_int(mark.get("end"), 0, 20000)
+        item["excerpt"] = str(mark.get("excerpt") or "")[:400]
+    if scope == "lock":
+        return item
+    field = _clean_field(mark["field"]) if isinstance(mark.get("field"), dict) else None
+    item["field"] = field if field and "key" in field else None
+    fields = []
+    if isinstance(mark.get("fields"), list):
+        for field_item in mark["fields"][:12]:
+            if not isinstance(field_item, dict):
+                continue
+            cleaned = _clean_field(field_item)
+            if cleaned and "key" in cleaned:
+                fields.append(cleaned)
+    if fields:
+        item["fields"] = fields
+    return item
+
+
+def _clean_excel_marks(raw) -> dict:
+    if not isinstance(raw, dict):
+        return {}
+    kept = {}
+    for key, value in list(raw.items())[:2000]:
+        ident = str(key)
+        if not _excel_cell_id(ident) or not isinstance(value, list):
+            continue
+        marks = [cleaned for mark in value[:40] if (cleaned := _clean_excel_mark(mark))]
+        if marks:
+            kept[ident] = marks
+    return kept
+
+
+def _clean_pdf_maps(raw) -> dict:
+    return _clean_field_maps(raw, _pdf_field_id)
+
+
+def _clean_pdf_ticks(raw) -> dict:
+    return _clean_flag_map(raw, _pdf_field_id)
+
+
+@app.get("/api/pdf/mappings")
+def pdf_mappings(file: str) -> dict:
+    """PDF field mappings stored in MongoDB, separate from company records."""
+    name = _pdf_mapping_name(file)
+    found = get_store().get_pdf_mapping(name) or {}
+    return {"file": name, "maps": found.get("maps") or {}, "ticks": found.get("ticks") or {}}
+
+
+@app.put("/api/pdf/mappings")
+def save_pdf_mappings(payload: dict = Body(...)) -> dict:
+    """Replace one PDF's mappings. Other files and the company database stay."""
+    name = _pdf_mapping_name(str(payload.get("file") or ""))
+    saved = get_store().save_pdf_mapping(
+        name,
+        _clean_pdf_maps(payload.get("maps")),
+        _clean_pdf_ticks(payload.get("ticks")),
+        _now(),
+    )
+    return {"file": name, "maps": saved["maps"], "ticks": saved["ticks"]}
+
+
+@app.get("/api/word/mappings")
+def word_mappings(file: str) -> dict:
+    """Word field mappings stored in MongoDB, separate from company records."""
+    name = _form_mapping_name(file, "word")
+    found = get_store().get_form_mapping("word", name) or {}
+    return {"file": name, "maps": found.get("maps") or {}, "ticks": found.get("ticks") or {}}
+
+
+@app.put("/api/word/mappings")
+def save_word_mappings(payload: dict = Body(...)) -> dict:
+    """Replace one Word file's mappings. Other files and the company database stay."""
+    name = _form_mapping_name(str(payload.get("file") or ""), "word")
+    saved = get_store().save_form_mapping(
+        "word",
+        name,
+        {
+            "maps": _clean_field_maps(payload.get("maps"), lambda ident: bool(_WORD_FIELD_ID.fullmatch(ident))),
+            "ticks": _clean_flag_map(payload.get("ticks"), lambda ident: bool(_WORD_FIELD_ID.fullmatch(ident))),
+        },
+        _now(),
+    )
+    return {"file": name, "maps": saved["maps"], "ticks": saved["ticks"]}
+
+
+@app.get("/api/excel/mappings")
+def excel_mappings(file: str) -> dict:
+    """Excel cell mappings stored in MongoDB, separate from company records."""
+    name = _form_mapping_name(file, "excel")
+    found = get_store().get_form_mapping("excel", name) or {}
+    return {"file": name, "maps": found.get("maps") or {}, "marks": found.get("marks") or {}}
+
+
+@app.put("/api/excel/mappings")
+def save_excel_mappings(payload: dict = Body(...)) -> dict:
+    """Replace one workbook's mappings. Other files and the company database stay."""
+    name = _form_mapping_name(str(payload.get("file") or ""), "excel")
+    saved = get_store().save_form_mapping(
+        "excel",
+        name,
+        {
+            "maps": _clean_field_maps(payload.get("maps"), _excel_cell_id),
+            "marks": _clean_excel_marks(payload.get("marks")),
+        },
+        _now(),
+    )
+    return {"file": name, "maps": saved["maps"], "marks": saved["marks"]}
 
 
 @app.post("/api/pdf/print")

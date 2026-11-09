@@ -2127,6 +2127,7 @@ function setBrowserMarks(file, sheet, row, col, marks) {
   if (marks.length) all[id] = marks;
   else delete all[id];
   saveExcelMarks(all);
+  schedulePdfMapping(file);
 }
 
 function editableFieldPath(key) {
@@ -2541,6 +2542,7 @@ function rememberFreeText(input) {
     saved.text = text;
     all[key] = saved;
     localStorage.setItem(WORD_MAP_KEY, JSON.stringify(all));
+    schedulePdfMapping(file);
     return;
   }
   const cell = input.closest('td');
@@ -2567,6 +2569,7 @@ function rememberFreeText(input) {
   if (maps[id]?.kind !== 'free') return;
   maps[id] = { ...maps[id], text };
   localStorage.setItem(EXCEL_MAPS_KEY, JSON.stringify(maps));
+  schedulePdfMapping(file);
 }
 
 function markFields(mark) {
@@ -2646,6 +2649,7 @@ function commitExcelMap(cell, field) {
   const maps = loadExcelMaps();
   maps[excelMapId($('#excelFile').value, $('#excelSheet').value, row, col)] = fieldSnapshot(field);
   localStorage.setItem(EXCEL_MAPS_KEY, JSON.stringify(maps));
+  schedulePdfMapping($('#excelFile').value);
   cell.innerHTML = excelMappedControl(field, row, col, true);
   closeExcelMapMenu();
   shiftPendingMaps(-1);
@@ -3537,6 +3541,153 @@ function isPdfFile(name) {
   return /\.pdf$/i.test(String(name || ''));
 }
 
+const pdfMappingTimers = new Map();
+const pdfMappingWrites = new Map();
+
+function formMappingKind(file) {
+  if (isPdfFile(file)) return 'pdf';
+  if (isWordFile(file)) return 'word';
+  if (/\.xls[xm]$/i.test(String(file || ''))) return 'excel';
+  return '';
+}
+
+function fileSlice(store, file) {
+  const prefix = `${file}\t`;
+  const out = {};
+  Object.entries(store || {}).forEach(([key, value]) => {
+    if (key.startsWith(prefix)) out[key.slice(prefix.length)] = value;
+  });
+  return out;
+}
+
+function pdfMappingPayload(file) {
+  const maps = fileSlice(loadWordMaps(), file);
+  const ticks = {};
+  Object.entries(fileSlice(loadWordTicks(), file)).forEach(([key, value]) => {
+    if (value) ticks[key] = true;
+  });
+  return { file, maps, ticks };
+}
+
+function excelMappingPayload(file) {
+  return {
+    file,
+    maps: fileSlice(loadExcelMaps(), file),
+    marks: fileSlice(loadExcelMarks(), file),
+  };
+}
+
+function writePdfMappingLocal(file, maps, ticks) {
+  const prefix = `${file}\t`;
+  const allMaps = loadWordMaps();
+  Object.keys(allMaps).forEach((key) => {
+    if (key.startsWith(prefix)) delete allMaps[key];
+  });
+  Object.entries(maps || {}).forEach(([id, field]) => {
+    allMaps[`${file}\t${id}`] = field;
+  });
+  localStorage.setItem(WORD_MAP_KEY, JSON.stringify(allMaps));
+  const allTicks = loadWordTicks();
+  Object.keys(allTicks).forEach((key) => {
+    if (key.startsWith(prefix)) delete allTicks[key];
+  });
+  Object.entries(ticks || {}).forEach(([id, on]) => {
+    if (on) allTicks[`${file}\t${id}`] = true;
+  });
+  localStorage.setItem(WORD_TICK_KEY, JSON.stringify(allTicks));
+}
+
+function replaceFileSlice(storageKey, load, file, saved) {
+  const all = load();
+  const prefix = `${file}\t`;
+  Object.keys(all).forEach((key) => {
+    if (key.startsWith(prefix)) delete all[key];
+  });
+  Object.entries(saved || {}).forEach(([id, value]) => {
+    all[`${file}\t${id}`] = value;
+  });
+  localStorage.setItem(storageKey, JSON.stringify(all));
+}
+
+function writeExcelMappingLocal(file, maps, marks) {
+  replaceFileSlice(EXCEL_MAPS_KEY, loadExcelMaps, file, maps);
+  replaceFileSlice(EXCEL_MARKS_KEY, loadExcelMarks, file, marks);
+}
+
+function sendFormMapping(file) {
+  const kind = formMappingKind(file);
+  if (!kind) return Promise.resolve();
+  const payload = kind === 'excel' ? excelMappingPayload(file) : pdfMappingPayload(file);
+  return fetch(`/api/${kind}/mappings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  }).then((res) => {
+    if (!res.ok) throw new Error('mapping');
+  });
+}
+
+function schedulePdfMapping(file) {
+  if (!formMappingKind(file)) return;
+  clearTimeout(pdfMappingTimers.get(file));
+  pdfMappingTimers.set(file, setTimeout(() => {
+    pdfMappingTimers.delete(file);
+    persistPdfMapping(file).catch(() => {});
+  }, 250));
+}
+
+function flushPdfMappings() {
+  const pending = [...pdfMappingTimers.keys()];
+  pdfMappingTimers.forEach((timer) => clearTimeout(timer));
+  pdfMappingTimers.clear();
+  const current = $('#excelFile')?.value || '';
+  new Set([...pending, current]).forEach((file) => {
+    sendFormMapping(file).catch(() => {});
+  });
+}
+
+function persistPdfMapping(file) {
+  const run = (pdfMappingWrites.get(file) || Promise.resolve()).catch(() => {}).then(() => sendFormMapping(file));
+  pdfMappingWrites.set(file, run);
+  return run;
+}
+
+function storedMappingCount(kind, record) {
+  const maps = Object.keys(record?.maps || {}).length;
+  if (kind === 'excel') return maps + Object.keys(record?.marks || {}).length;
+  return maps + Object.keys(record?.ticks || {}).length;
+}
+
+async function restorePdfMapping(file) {
+  const kind = formMappingKind(file);
+  if (!kind) return;
+  const timer = pdfMappingTimers.get(file);
+  if (timer) {
+    clearTimeout(timer);
+    pdfMappingTimers.delete(file);
+    try {
+      await persistPdfMapping(file);
+    } catch (err) {
+      return;
+    }
+  } else {
+    try {
+      await pdfMappingWrites.get(file);
+    } catch (err) {
+      return;
+    }
+  }
+  const saved = await api(`/api/${kind}/mappings?file=${encodeURIComponent(file)}`);
+  const local = kind === 'excel' ? excelMappingPayload(file) : pdfMappingPayload(file);
+  if (!storedMappingCount(kind, saved) && storedMappingCount(kind, local)) {
+    persistPdfMapping(file);
+    return;
+  }
+  if (kind === 'excel') writeExcelMappingLocal(file, saved.maps || {}, saved.marks || {});
+  else writePdfMappingLocal(file, saved.maps || {}, saved.ticks || {});
+}
+
 function previewKind(name) {
   if (isWordFile(name)) return 'word';
   if (isPdfFile(name)) return 'pdf';
@@ -3570,6 +3721,7 @@ function saveWordFieldMap(file, id, field) {
   const all = loadWordMaps();
   all[`${file}\t${id}`] = fieldSnapshot(field);
   localStorage.setItem(WORD_MAP_KEY, JSON.stringify(all));
+  schedulePdfMapping(file);
 }
 
 function loadWordTicks() {
@@ -3591,6 +3743,7 @@ function toggleWordTick(file, id) {
   if (all[key]) delete all[key];
   else all[key] = true;
   localStorage.setItem(WORD_TICK_KEY, JSON.stringify(all));
+  schedulePdfMapping(file);
 }
 
 function fieldPlace(field, page, extra) {
@@ -3617,6 +3770,7 @@ function toggleWordOriginal(file, id) {
   if (all[key]?.lock) delete all[key];
   else all[key] = { lock: true };
   localStorage.setItem(WORD_MAP_KEY, JSON.stringify(all));
+  schedulePdfMapping(file);
 }
 
 function wordCss(rules) {
@@ -4159,6 +4313,14 @@ async function loadLaidDocument(kind) {
     return;
   }
   $('#excelMeta').textContent = kind === 'pdf' ? '正在讀取 PDF…' : '正在按 Word 版面繪製，請稍候…';
+  let mappingNote = '';
+  if (kind === 'pdf' || kind === 'word') {
+    try {
+      await restorePdfMapping(file);
+    } catch (err) {
+      mappingNote = '無法讀取已儲存的對應，先用這部電腦上記下的版本。';
+    }
+  }
   const data = await api(`/api/${kind}/preview?file=${encodeURIComponent(file)}`);
   wordView.doc = data;
   const pages = data.pages || [];
@@ -4174,6 +4336,7 @@ async function loadLaidDocument(kind) {
   syncExcelPickSummary();
   syncExcelSheetNav();
   renderFormPages();
+  if (mappingNote) $('#excelMeta').textContent = mappingNote;
 }
 
 async function loadWordDocument() {
@@ -4194,7 +4357,17 @@ async function loadExcelGrid() {
     $('#excelMeta').textContent = '請先選擇 Excel。';
     return;
   }
-  if (excelForm) return loadExcelFormWorkbook();
+  let mappingNote = '';
+  try {
+    await restorePdfMapping(file);
+  } catch (err) {
+    mappingNote = '無法讀取已儲存的 Excel 對應，先用這部電腦上記下的版本。';
+  }
+  if (excelForm) {
+    await loadExcelFormWorkbook();
+    if (mappingNote) $('#excelMeta').textContent = mappingNote;
+    return;
+  }
   $('#excelMeta').textContent = '正在讀取…';
   const query = new URLSearchParams({
     file,
@@ -4215,6 +4388,7 @@ async function loadExcelGrid() {
   syncExcelPickSummary();
   renderExcelTable(data);
   applyExcelPrint(data.page);
+  if (mappingNote) $('#excelMeta').textContent = mappingNote;
 }
 
 async function loadExcelFormWorkbook() {
@@ -4466,6 +4640,7 @@ function applyMappingProfile(file, profile) {
   const pages = loadFormPages();
   pages[file] = Array.isArray(profile.formPages) ? profile.formPages.filter((name) => typeof name === 'string' && name) : [];
   localStorage.setItem(FORM_PAGES_KEY, JSON.stringify(pages));
+  schedulePdfMapping(file);
 }
 
 function refreshMapProfiles() {
@@ -5205,7 +5380,7 @@ function bindExcelPane() {
       const ticks = (data.marks || []).filter((mark) => mark.kind === 'tick').length;
       const texts = (data.marks || []).filter((mark) => mark.kind === 'text').length;
       $('#excelMeta').textContent = added
-        ? `已加上 ${ticks} 個勾選框、${texts} 個文字欄 [[]]。這只記在這部電腦，不會改 Excel 檔，也不會寫入公司資料。`
+        ? `已加上 ${ticks} 個勾選框、${texts} 個文字欄 [[]]。不會改 Excel 檔，也不會寫入公司資料。`
         : '這一頁沒有新的勾選或空白文字欄需要轉換。';
     }).catch((err) => {
       $('#excelMeta').textContent = err.message;
@@ -5329,6 +5504,7 @@ function bindExcelPane() {
     const maps = loadExcelMaps();
     delete maps[excelMapId($('#excelFile').value, $('#excelSheet').value, cell.dataset.excelRow, cell.dataset.excelCol)];
     localStorage.setItem(EXCEL_MAPS_KEY, JSON.stringify(maps));
+    schedulePdfMapping($('#excelFile').value);
     const owners = (cell.dataset.excelOwners || '').split(',').filter(Boolean);
     cell.innerHTML = excelPickControl(owners, cell.dataset.excelValue || '');
     const input = cell.querySelector('.excel-map-query');
@@ -5372,6 +5548,7 @@ async function refreshFileLists(preferred) {
 async function init() {
   bindEvents();
   bindExcelPane();
+  window.addEventListener('pagehide', () => flushPdfMappings());
   try {
     await refreshFileLists();
   } catch {
