@@ -1783,6 +1783,12 @@ function saveField(input) {
       render.scrollTop = $('#main').scrollTop;
       render.keepScroll = true;
       renderCompany();
+    } else {
+      try {
+        refreshExcelLiveValues();
+      } catch (err) {
+        // The company is already saved. The form can be refreshed by choosing it again.
+      }
     }
   }).catch((err) => setSave(`儲存失敗：${err.message}`, true));
   return fieldSave;
@@ -2538,12 +2544,15 @@ function refreshExcelLiveValues() {
 }
 
 function refreshLaidForm() {
-  if (!wordView?.doc?.pages?.length) return;
+  const file = $('#excelFile')?.value || '';
+  const doc = wordView?.doc;
+  if (!doc?.pages?.length || !(isWordFile(file) || isPdfFile(file))) return;
+  if (doc.file && doc.file !== file) return;
   const scroll = $('#excelScroll');
   if (!scroll || document.activeElement?.closest?.('#excelScroll')) return;
   const top = scroll.scrollTop;
   const left = scroll.scrollLeft;
-  renderWordPage(wordView.doc, wordView.page);
+  renderWordPage(doc, wordView.page);
   scroll.scrollTop = top;
   scroll.scrollLeft = left;
 }
@@ -4533,6 +4542,8 @@ async function loadLaidDocument(kind) {
     }
   }
   const data = await api(`/api/${kind}/preview?file=${encodeURIComponent(file)}`);
+  if (kind === 'pdf') data.kind = 'pdf';
+  else if (!data.kind) data.kind = 'docx';
   wordView.doc = data;
   const pages = data.pages || [];
   const select = $('#excelSheet');

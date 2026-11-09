@@ -17,7 +17,6 @@ from pathlib import Path
 
 from fpdf import FPDF
 from pypdf import PdfReader, PdfWriter
-from pypdf.errors import PdfReadError
 from pypdf.generic import (
     ArrayObject,
     BooleanObject,
@@ -29,7 +28,7 @@ from pypdf.generic import (
     create_string_object,
 )
 
-from .pdf_preview import PdfPreviewError, iter_widgets, preview_pdf
+from .pdf_preview import PdfPreviewError, iter_widgets, open_reader, preview_pdf
 
 _JOBS: dict[str, tuple[float, bytes]] = {}
 _JOB_SECONDS = 120
@@ -49,19 +48,7 @@ _FONTS = (
 
 def compose_pdf(source: str | Path | bytes, fields: list) -> bytes:
     raw = Path(source).read_bytes() if not isinstance(source, bytes) else source
-    if raw[:5] != b"%PDF-":
-        raise PdfPreviewError("這不是 PDF")
-    try:
-        reader = PdfReader(stream=BytesIO(raw), strict=False)
-    except PdfReadError as exc:
-        raise PdfPreviewError("無法讀取這個 PDF") from exc
-    if reader.is_encrypted:
-        try:
-            opened = reader.decrypt("")
-        except Exception as exc:
-            raise PdfPreviewError("這份 PDF 有密碼，無法預覽") from exc
-        if opened == 0:
-            raise PdfPreviewError("這份 PDF 有密碼，無法預覽")
+    reader = open_reader(raw)
     laid = preview_pdf(raw)
     wanted = _clean_fields(fields)
     writer = PdfWriter(clone_from=reader)

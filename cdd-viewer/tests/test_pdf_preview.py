@@ -87,6 +87,21 @@ class PdfPreviewTests(unittest.TestCase):
         self.assertGreater(dark, 100)
         self.assertGreater(inside / dark, 0.9)
 
+    def test_an_aes_form_with_an_empty_password_can_be_previewed(self):
+        from io import BytesIO
+
+        from pypdf import PdfWriter
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=200)
+        writer.encrypt("", algorithm="AES-256")
+        raw = BytesIO()
+        writer.write(raw)
+        laid = preview_pdf(raw.getvalue())
+        self.assertEqual(laid["kind"], "pdf")
+        self.assertEqual(laid["page_count"], 1)
+
+
 def _luma(data: bytes):
     pos = 8
     width = height = color = None

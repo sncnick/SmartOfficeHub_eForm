@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 
 from pypdf import PdfReader
-from pypdf.errors import PdfReadError
+from pypdf.errors import DependencyError, PdfReadError
 
 _LOCK = threading.Lock()
 _CACHE: dict[str, dict] = {}
@@ -68,7 +68,8 @@ def page_png(source: str | Path | bytes, number: int) -> bytes:
         return stored
 
 
-def _read(raw: bytes) -> dict:
+def open_reader(raw: bytes) -> PdfReader:
+    """Open a PDF, including forms that use AES with an empty open password."""
     if raw[:5] != b"%PDF-":
         raise PdfPreviewError("這不是 PDF")
     try:
@@ -78,23 +79,38 @@ def _read(raw: bytes) -> dict:
     if reader.is_encrypted:
         try:
             opened = reader.decrypt("")
+        except DependencyError as exc:
+            raise PdfPreviewError("這份 PDF 需要加密元件才能開啟") from exc
         except Exception as exc:
             raise PdfPreviewError("這份 PDF 有密碼，無法預覽") from exc
         if opened == 0:
             raise PdfPreviewError("這份 PDF 有密碼，無法預覽")
-    if not reader.pages:
-        raise PdfPreviewError("這份 PDF 沒有頁面")
+    return reader
+
+
+def _read(raw: bytes) -> dict:
+    reader = open_reader(raw)
     pages = []
-    for index, page in enumerate(reader.pages, start=1):
-        crop_w, crop_h, rotation = _crop(page)
-        width, height = _css_size(crop_w, crop_h, rotation)
-        pages.append({
-            "n": index,
-            "width": width,
-            "height": height,
-            "fields": _widgets(page, index, crop_w, crop_h, rotation),
-            "ticks": [],
-        })
+    try:
+        page_list = list(reader.pages)
+        if not page_list:
+            raise PdfPreviewError("這份 PDF 沒有頁面")
+        for index, page in enumerate(page_list, start=1):
+            crop_w, crop_h, rotation = _crop(page)
+            width, height = _css_size(crop_w, crop_h, rotation)
+            pages.append({
+                "n": index,
+                "width": width,
+                "height": height,
+                "fields": _widgets(page, index, crop_w, crop_h, rotation),
+                "ticks": [],
+            })
+    except PdfPreviewError:
+        raise
+    except DependencyError as exc:
+        raise PdfPreviewError("這份 PDF 需要加密元件才能開啟") from exc
+    except Exception as exc:
+        raise PdfPreviewError("無法讀取這個 PDF") from exc
     return {"pages": pages, "asset": hashlib.sha256(raw).hexdigest()[-16:]}
 
 
