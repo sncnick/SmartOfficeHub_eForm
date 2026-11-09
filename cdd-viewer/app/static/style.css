@@ -562,17 +562,22 @@ body.excel-form .word-tick { pointer-events: none; cursor: default; }
   cursor: pointer;
 }
 body.excel-form .word-hit { background: transparent; box-shadow: none; pointer-events: none; }
+body.excel-form .word-sheet .word-hit {
+  background-color: rgba(16, 185, 129, .18);
+  background-image: none;
+  box-shadow: inset 0 0 0 1.5px #059669;
+}
 body.excel-form .word-hit.form-fill {
-  background-color: rgba(167, 243, 208, .45);
-  background-image: repeating-linear-gradient(-45deg, transparent 0 3px, rgba(5, 150, 105, .3) 3px 4px);
-  box-shadow: inset 0 0 0 1px rgba(5, 150, 105, .5);
+  background-color: transparent;
+  background-image: none;
+  box-shadow: inset 0 0 0 2px #059669;
   overflow: visible;
 }
 body.excel-form .word-hit.form-fill .form-free { pointer-events: auto; height: 100%; }
 body.excel-form .word-hit.form-empty {
-  background-color: rgba(254, 240, 138, .55);
-  background-image: repeating-linear-gradient(-45deg, transparent 0 3px, rgba(202, 138, 4, .38) 3px 4px);
-  box-shadow: inset 0 0 0 1px rgba(180, 83, 9, .55);
+  background-color: rgba(16, 185, 129, .18);
+  background-image: none;
+  box-shadow: inset 0 0 0 1.5px #059669;
   overflow: visible;
 }
 body.excel-form .word-hit.form-empty .form-fill-tag { background: rgba(146, 64, 14, .92); }
@@ -902,10 +907,12 @@ body:not(.excel-form) .excel-scroll .excel-tick input { pointer-events: none; }
 .main { min-width: 0; min-height: 0; padding: 18px 24px 48px; overflow: auto; }
 .placeholder { padding: 60px; color: var(--muted); text-align: center; }
 
-.company-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.company-head .title { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; }
-.company-head h2 { margin: 0; overflow-wrap: anywhere; font-size: 20px; }
+.company-head { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 12px; }
+.company-head .title { display: flex; align-items: flex-start; gap: 12px; width: 100%; }
+.company-head .title > div { min-width: 0; }
+.company-head h2 { margin: 0; font-size: 20px; line-height: 1.35; }
 .company-head .sub { color: var(--muted); }
+.company-nav { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .hint {
   margin-bottom: 12px;
@@ -1447,6 +1454,8 @@ body.excel-form .excel-sheet-frame > .form-page-label {
   margin-bottom: 8px;
 }
 .excel-form-bar button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; }
+.excel-form-bar .excel-save-company { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+.excel-form-bar .excel-save-company input { margin: 0; }
 .excel-form-bar .excel-page-nav { margin-right: auto; }
 body.excel-form .excel-fill-cell { box-shadow: none; }
 body.excel-form .excel-mark-bar,
@@ -1698,11 +1707,18 @@ body.excel-form .excel-form-field {
 
 #excelScroll .xfaLayer > .pdf-map-tag { transform: translateY(-100%); }
 #excelScroll .pdf-browser [data-word-field] { cursor: pointer; }
+#excelScroll .xfaWrapper.pdf-field-box {
+  box-sizing: border-box;
+  background-color: rgba(16, 185, 129, .18);
+  background-image: none;
+  box-shadow: inset 0 0 0 1.5px #059669;
+}
 #excelScroll .pdf-browser .pdf-mapped,
 #excelScroll .xfaWrapper.pdf-mapped {
-  outline: 2px solid #059669;
-  outline-offset: -2px;
-  box-shadow: inset 0 0 0 2px rgba(5, 150, 105, .85);
+  outline: none;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: inset 0 0 0 2px #059669;
 }
 #excelScroll .xfaWrapper > .pdf-field-value {
   position: absolute;
@@ -1820,3 +1836,4 @@ body.excel-form .excel-form-field {
 #excelScroll .xfaTable .xfaRlRow { display: flex; flex-direction: row-reverse; align-items: stretch; flex: 1; }
 #excelScroll .xfaTable .xfaRlRow > div { flex: 1; }
 #excelScroll .xfaValignMiddle { display: flex; align-items: center; }
+

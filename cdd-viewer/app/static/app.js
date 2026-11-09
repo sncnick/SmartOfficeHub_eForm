@@ -1569,7 +1569,10 @@ function renderCompany() {
   const main = $('#main');
   main.innerHTML = `
     <div class="company-head">
-      <button type="button" class="btn" data-nav="-1" ${idx <= 0 ? 'disabled' : ''}>◀ 上一間</button>
+      <div class="company-nav">
+        <button type="button" class="btn" data-nav="-1" ${idx <= 0 ? 'disabled' : ''}>◀ 上一間</button>
+        <button type="button" class="btn" data-nav="1" ${idx < 0 || idx >= state.filtered.length - 1 ? 'disabled' : ''}>下一間 ▶</button>
+      </div>
       <div class="title">
         ${swatch(c.label_color, 'big')}
         <div>
@@ -1578,7 +1581,6 @@ function renderCompany() {
         </div>
         ${c.active ? '' : `<span class="pill inactive">${esc(statusText(c))}</span>`}
       </div>
-      <button type="button" class="btn" data-nav="1" ${idx < 0 || idx >= state.filtered.length - 1 ? 'disabled' : ''}>下一間 ▶</button>
     </div>
     ${state.collapsed
     ? `<div class="hint">已收起 ${state.collapsed} 項 OUTDATED（已過期）資料，毋須理會；如需查看可逐項按開，或勾選「展開所有 OUTDATED」。</div>`
@@ -4363,6 +4365,7 @@ function bindBrowserPdfFields(layer) {
     }
     used.add(id);
     node.dataset.wordField = id;
+    node.closest('.xfaWrapper')?.classList.add('pdf-field-box');
     node.dataset.xfaPath = browserXfaPath(node);
     node.dataset.wordParam = on ? `${xfaName || '欄位'} · ${on}` : (xfaName || '欄位');
     if (checkbox) node.dataset.wordControl = 'checkbox';
@@ -4566,9 +4569,16 @@ function applyLaidPrint(doc) {
   style.textContent = `@page { size: ${width}mm ${height}mm; margin: 0; }`;
 }
 
+function fileNamePart(value) {
+  return String(value || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
 function saveName(file, suffix) {
   const stem = String(file || 'form').replace(/\.[^.]+$/, '');
-  return `${stem}-filled.${suffix}`;
+  const useCompany = document.querySelector('#excelSaveCompany')?.checked;
+  const company = selectedCompany();
+  const prefix = useCompany ? fileNamePart(company?.general?.name_en || company?.general?.name_zh || '') : '';
+  return `${prefix ? `${prefix}_` : ''}${stem}.${suffix}`;
 }
 
 function collectExcelFilled() {
@@ -5711,7 +5721,7 @@ function bindExcelPane() {
     document.body.classList.add('excel-form');
     const bar = document.createElement('div');
     bar.className = 'excel-form-bar';
-    bar.innerHTML = '<button type="button" id="excelPrint">列印表格</button><button type="button" id="excelSave">另存檔案</button><span>列印整份檔案。已對應的欄位會自動填上。另存會把填好的檔案存到你指定的位置。</span>';
+    bar.innerHTML = '<button type="button" id="excelPrint">列印表格</button><button type="button" id="excelSave">另存檔案</button><label class="excel-save-company"><input type="checkbox" id="excelSaveCompany"> 檔名加上公司名</label><span>列印整份檔案。已對應的欄位會自動填上。另存會把填好的檔案存到你指定的位置。</span>';
     const nav = document.querySelector('.excel-page-nav');
     if (nav) bar.querySelector('#excelPrint').after(nav);
     $('#excelBody').prepend(bar);
@@ -5727,6 +5737,11 @@ function bindExcelPane() {
         fitExcelSheet();
         window.print();
       });
+    });
+    const saveCompany = $('#excelSaveCompany');
+    saveCompany.checked = localStorage.getItem('cdd-viewer.save-company-prefix') === '1';
+    saveCompany.addEventListener('change', () => {
+      localStorage.setItem('cdd-viewer.save-company-prefix', saveCompany.checked ? '1' : '0');
     });
     $('#excelSave').addEventListener('click', () => saveFilledFile());
     window.addEventListener('resize', fitExcelSheet);
